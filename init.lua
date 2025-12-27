@@ -10,17 +10,18 @@ math.randomseed(os.time())
 -- CONFIG
 --------------------------------------------------
 local IDLE_SECONDS = 5
-local SELF_EVENT_GRACE_MS = 3000                     -- Increased to 3s to better prevent self-pause
-local ENABLE_GLOBAL_UI = true                        -- Mission Control / Spotlight
-local ENABLE_TYPING = true                           -- Keyboard typing in apps
-local MIN_INTERVAL = 2                               -- Balanced for natural activity
-local MAX_INTERVAL = 5                               -- Balanced for natural activity
-local AUTO_REVERT_DELAY = 0.8                        -- Fast revert to avoid conflicts (0.8s)
-local ENABLE_AUTO_REVERT = true                      -- Automatically revert actions for humanized behavior
+local SELF_EVENT_GRACE_MS = 3000                       -- Increased to 3s to better prevent self-pause
+local ENABLE_GLOBAL_UI = true                          -- Mission Control / Spotlight
+local ENABLE_TYPING = true                             -- Keyboard typing in apps
+local MIN_INTERVAL = 2                                 -- Balanced for natural activity
+local MAX_INTERVAL = 5                                 -- Balanced for natural activity
+local AUTO_REVERT_DELAY = 0.8                          -- Fast revert to avoid conflicts (0.8s)
+local ENABLE_AUTO_REVERT = true                        -- Automatically revert actions for humanized behavior
 local PRIORITY_APPS = { "Code", "Visual Studio Code" } -- VS Code is top priority
-local SECONDARY_APPS = { "Chrome", "Google Chrome" } -- Chrome secondary
-local VSCODE_FOCUS_CHANCE = 85                       -- 85% chance to focus VS Code specifically
-local PRIORITY_APP_FOCUS_CHANCE = 75                 -- Overall chance to focus priority apps
+local SECONDARY_APPS = { "Chrome", "Google Chrome" }   -- Chrome secondary
+local VSCODE_FOCUS_CHANCE = 85                         -- 85% chance to focus VS Code specifically
+local PRIORITY_APP_FOCUS_CHANCE = 75                   -- Overall chance to focus priority apps
+local SPOTLIGHT_MIN_INTERVAL = 300                     -- Minimum 5 minutes between Spotlight activations
 
 --------------------------------------------------
 -- STATE
@@ -28,9 +29,10 @@ local PRIORITY_APP_FOCUS_CHANCE = 75                 -- Overall chance to focus 
 local activityTimer = nil
 local resumeTimer = nil
 local isPausedByUser = false
+local lastSpotlightTime = 0 -- Track last Spotlight activation
 local lastSimulationTime = 0
-local actionHistory = {} -- Store history of actions for undo
-local MAX_HISTORY = 10   -- Keep last 10 actions
+local actionHistory = {}    -- Store history of actions for undo
+local MAX_HISTORY = 10      -- Keep last 10 actions
 
 --------------------------------------------------
 -- TIME (MONOTONIC)
@@ -727,9 +729,11 @@ local function simulateActivity()
   end -- Close OPTION 7
 
   ------------------------------------------------
-  -- OPTION 8: Spotlight search with typing (1%)
+  -- OPTION 8: Spotlight search with typing (rare - only after 5+ minutes)
   ------------------------------------------------
-  if action <= 98 and ENABLE_GLOBAL_UI and ENABLE_TYPING then
+  local timeSinceSpotlight = os.time() - lastSpotlightTime
+  if action <= 98 and ENABLE_GLOBAL_UI and ENABLE_TYPING and timeSinceSpotlight >= SPOTLIGHT_MIN_INTERVAL then
+    lastSpotlightTime = os.time()
     hs.eventtap.keyStroke({ "cmd" }, "space")
     hs.timer.doAfter(0.3, function()
       local searchTerms = { "calculator", "system preferences", "activity monitor", "finder", "safari", "notes",
@@ -754,7 +758,7 @@ local function simulateActivity()
       function()
         hs.eventtap.keyStroke({ "cmd" }, "a") -- Select all
         hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-          hs.eventtap.keyStroke({}, "right") -- Deselect
+          hs.eventtap.keyStroke({}, "right")  -- Deselect
         end)
       end,
       function()
@@ -776,23 +780,23 @@ local function simulateActivity()
         end)
       end,
       function()
-        hs.eventtap.keyStroke({ "cmd" }, "left")         -- Move to beginning
+        hs.eventtap.keyStroke({ "cmd" }, "left")           -- Move to beginning
         hs.timer.usleep(80000)
         hs.eventtap.keyStroke({ "shift", "cmd" }, "right") -- Select to end
         hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-          hs.eventtap.keyStroke({}, "right")             -- Deselect
+          hs.eventtap.keyStroke({}, "right")               -- Deselect
         end)
       end,
       function()
         -- Quick navigation that counts as activity
-        hs.eventtap.keyStroke({ "cmd" }, "up") -- Go to top
+        hs.eventtap.keyStroke({ "cmd" }, "up")  -- Go to top
         hs.timer.doAfter(AUTO_REVERT_DELAY, function()
           hs.eventtap.keyStroke({ "cmd" }, "z") -- Undo navigation if it changed something
         end)
       end,
       function()
         -- Open/close sidebar (VS Code command palette)
-        hs.eventtap.keyStroke({ "cmd" }, "b") -- Toggle sidebar
+        hs.eventtap.keyStroke({ "cmd" }, "b")   -- Toggle sidebar
         hs.timer.doAfter(AUTO_REVERT_DELAY, function()
           hs.eventtap.keyStroke({ "cmd" }, "b") -- Toggle back
         end)
