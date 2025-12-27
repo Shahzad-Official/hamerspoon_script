@@ -147,35 +147,39 @@ local function addCodeComment()
   -- Track this action for undo
   addToHistory("comment", { text = comment })
   
-  -- Navigate down 5 lines
-  for _ = 1, 5 do
-    hs.eventtap.keyStroke({}, "down")
-    hs.timer.usleep(30000)
-  end
-  
-  -- Go to end of line and add new line
+  -- Go to end of current line and add new line
   hs.eventtap.keyStroke({"cmd"}, "right")
   hs.timer.usleep(50000)
   hs.eventtap.keyStroke({}, "return")
   hs.timer.usleep(100000)
   
-  -- Type the comment
+  -- Type the comment character by character
   for i = 1, #comment do
     local char = comment:sub(i, i)
     hs.eventtap.keyStrokes(char)
     hs.timer.usleep(math.random(40000, 80000))
   end
   
-  -- Wait then delete the comment
-  hs.timer.doAfter(1.5, function()
-    -- Select the line and delete
-    hs.eventtap.keyStroke({"cmd"}, "left")
-    hs.timer.usleep(50000)
-    hs.eventtap.keyStroke({"shift", "cmd"}, "right")
-    hs.timer.usleep(50000)
-    hs.eventtap.keyStroke({}, "delete")
-    hs.timer.usleep(50000)
-    hs.eventtap.keyStroke({}, "delete") -- Delete the newline
+  -- Wait then undo the comment using Cmd+Z (realistic undo behavior)
+  hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+    -- Use Cmd+Z to undo - this works with editor's undo system
+    hs.eventtap.keyStroke({"cmd"}, "z")
+    hs.timer.usleep(100000)
+    -- Undo again to remove the newline
+    hs.eventtap.keyStroke({"cmd"}, "z")
+    
+    -- Add scrolling after undo (simulates reading the code)
+    hs.timer.doAfter(0.3, function()
+      local scrollAmount = math.random(-25, -8)
+      hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
+      
+      -- Sometimes scroll back
+      if math.random() > 0.5 then
+        hs.timer.doAfter(1.5, function()
+          hs.eventtap.scrollWheel({ 0, -scrollAmount }, {}, "pixel")
+        end)
+      end
+    end)
   end)
 end
 
@@ -424,6 +428,13 @@ local function simulateActivity()
       -- Special handling for VS Code - add comments instead of typing
       if isVSCode(appName) then
         addCodeComment()
+        -- Also occasionally do pure scrolling in VS Code
+        if math.random() > 0.6 then
+          hs.timer.doAfter(0.5, function()
+            local scrollAmount = math.random(-30, -10)
+            hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
+          end)
+        end
       -- Regular typing for other apps
       elseif appName:match("TextEdit") or 
          appName:match("Notes") or appName:match("Terminal") or
