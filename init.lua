@@ -142,6 +142,22 @@ local codeComments = {
   "// FIXME: Handle async properly"
 }
 
+--------------------------------------------------
+-- UNDO/REVERT FUNCTIONALITY
+--------------------------------------------------
+local function addToHistory(actionType, data)
+  table.insert(actionHistory, 1, {
+    type = actionType,
+    data = data,
+    timestamp = os.time()
+  })
+
+  -- Keep history size limited
+  if #actionHistory > MAX_HISTORY then
+    table.remove(actionHistory, #actionHistory)
+  end
+end
+
 -- Function to add comment in code
 local function addCodeComment()
   local comment = codeComments[math.random(1, #codeComments)]
@@ -289,22 +305,6 @@ local function deleteTypedText(textLength)
     if i % 10 == 0 then
       hs.timer.usleep(10000) -- Tiny pause every 10 deletes
     end
-  end
-end
-
---------------------------------------------------
--- UNDO/REVERT FUNCTIONALITY
---------------------------------------------------
-local function addToHistory(actionType, data)
-  table.insert(actionHistory, 1, {
-    type = actionType,
-    data = data,
-    timestamp = os.time()
-  })
-
-  -- Keep history size limited
-  if #actionHistory > MAX_HISTORY then
-    table.remove(actionHistory, #actionHistory)
   end
 end
 
