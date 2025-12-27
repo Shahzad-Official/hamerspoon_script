@@ -13,12 +13,12 @@ local IDLE_SECONDS = 5
 local SELF_EVENT_GRACE_MS = 1500 -- Increased to 1.5s to better distinguish self events
 local ENABLE_GLOBAL_UI = true -- Mission Control / Spotlight
 local ENABLE_TYPING = true -- Keyboard typing in apps
-local MIN_INTERVAL = 1 -- Increased frequency for 70-90% activity
-local MAX_INTERVAL = 3 -- Increased frequency for 70-90% activity
+local MIN_INTERVAL = 3 -- Reduced frequency for better user interaction
+local MAX_INTERVAL = 6 -- Reduced frequency for better user interaction
 local PRIORITY_APPS = {"Code", "Visual Studio Code"} -- VS Code is top priority
 local SECONDARY_APPS = {"Chrome", "Google Chrome"} -- Chrome secondary
-local VSCODE_FOCUS_CHANCE = 80 -- 80% chance to focus VS Code specifically
-local PRIORITY_APP_FOCUS_CHANCE = 75 -- Overall chance to focus priority apps
+local VSCODE_FOCUS_CHANCE = 70 -- 70% chance to focus VS Code specifically
+local PRIORITY_APP_FOCUS_CHANCE = 60 -- Overall chance to focus priority apps
 
 --------------------------------------------------
 -- STATE
@@ -281,7 +281,7 @@ local function simulateActivity()
   
   lastSimulationTime = nowMs()
 
-  -- Focus priority apps frequently (75% chance, heavily favoring VS Code)
+  -- Focus priority apps less frequently (60% chance)
   if math.random(1, 100) <= PRIORITY_APP_FOCUS_CHANCE then
     focusPriorityApp()
     hs.timer.usleep(500000) -- Wait 500ms for app to focus
@@ -297,9 +297,9 @@ local function simulateActivity()
   local action = math.random(1, 100)
 
   ------------------------------------------------
-  -- OPTION 1: Typing in focused app (45% - increased for VS Code)
+  -- OPTION 1: Typing in focused app (25% - reduced for user interaction)
   ------------------------------------------------
-  if action <= 45 and ENABLE_TYPING then
+  if action <= 25 and ENABLE_TYPING then
     local win = hs.window.focusedWindow()
     if win then
       local appName = win:application():name()
@@ -319,9 +319,9 @@ local function simulateActivity()
         -- Extra typing for priority apps, especially VS Code
         local typeCount = 1
         if isVSCode(appName) then
-          typeCount = math.random(2, 3) -- Type 2-3 times in VS Code for max activity
+          typeCount = math.random(1, 2) -- Type 1-2 times in VS Code
         elseif isPriorityApp(appName) then
-          typeCount = math.random(1, 2) -- Sometimes type twice in Chrome
+          typeCount = 1 -- Single typing in Chrome
         end
         
         hs.timer.doAfter(0.1, function()
@@ -360,9 +360,9 @@ local function simulateActivity()
     end
 
   ------------------------------------------------
-  -- OPTION 2: Scroll (25% - adjusted for more typing)
+  -- OPTION 2: Scroll (35% - increased since typing reduced)
   ------------------------------------------------
-  elseif action <= 70 then
+  elseif action <= 60 then
     -- More aggressive scrolling
     local scrollType = math.random(1, 3)
     if scrollType == 1 then
