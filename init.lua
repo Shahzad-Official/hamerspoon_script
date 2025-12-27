@@ -13,8 +13,8 @@ local IDLE_SECONDS = 5
 local SELF_EVENT_GRACE_MS = 300
 local ENABLE_GLOBAL_UI = true -- Mission Control / Spotlight
 local ENABLE_TYPING = true -- Keyboard typing in apps
-local MIN_INTERVAL = 2 -- Reduced for more frequent activity
-local MAX_INTERVAL = 5 -- Reduced for more frequent activity
+local MIN_INTERVAL = 1 -- Increased frequency for 70-90% activity
+local MAX_INTERVAL = 3 -- Increased frequency for 70-90% activity
 
 --------------------------------------------------
 -- STATE
@@ -34,34 +34,138 @@ end
 --------------------------------------------------
 -- TYPING HELPERS
 --------------------------------------------------
-local commonWords = {
-  "the", "be", "to", "of", "and", "a", "in", "that", "have", "I",
-  "it", "for", "not", "on", "with", "he", "as", "you", "do", "at",
-  "this", "but", "his", "by", "from", "they", "we", "say", "her", "she",
-  "or", "an", "will", "my", "one", "all", "would", "there", "their", "what",
-  "function", "return", "const", "let", "var", "if", "else", "for", "while",
-  "class", "import", "export", "async", "await", "try", "catch", "new"
+-- Terminal commands for NestJS & Flutter developer
+local terminalCommands = {
+  "npm run start:dev", "npm install", "npm run build", "npm run test",
+  "flutter run", "flutter doctor", "flutter pub get", "flutter clean",
+  "git status", "git add .", "git commit -m \"", "git push origin",
+  "docker-compose up -d", "docker ps", "yarn install", "yarn start",
+  "nest generate module", "nest generate service", "nest g controller",
+  "flutter create", "flutter build apk", "flutter analyze",
+  "npm run lint", "npm run format", "yarn test:watch",
+  "cd backend && npm install", "cd mobile && flutter pub get",
+  "prisma migrate dev", "prisma studio", "typeorm migration:run"
 }
 
-local function typeRandomText()
-  local numWords = math.random(2, 6)
-  local text = ""
-  
-  for i = 1, numWords do
-    text = text .. commonWords[math.random(1, #commonWords)]
-    if i < numWords then
-      text = text .. " "
+-- NestJS code snippets
+local nestjsSnippets = {
+  "@Controller('", "@Get()", "@Post()", "@Injectable()",
+  "async create(@Body() dto: ", "constructor(private readonly ",
+  "import { Controller, Get, Post } from '@nestjs/common';",
+  "export class AppService {", "@Module({ imports: [",
+  "async findAll(): Promise<", "return this.service.",
+  "@UseGuards(JwtAuthGuard)", "throw new HttpException(",
+  "await this.repository.save(", "@ApiTags('",
+  "implements OnModuleInit {", "private readonly logger = new Logger("
+}
+
+-- Flutter/Dart code snippets
+local flutterSnippets = {
+  "class MyWidget extends StatelessWidget {", "Widget build(BuildContext context) {",
+  "return Scaffold(", "setState(() {", "final controller = TextEditingController();",
+  "Navigator.push(context, MaterialPageRoute(", "import 'package:flutter/material.dart';",
+  "Future<void> fetchData() async {", "try { await http.get(",
+  "child: Column(children: [", "onPressed: () {", "const SizedBox(height: ",
+  "Provider.of<", "BlocBuilder<", "GetX<",
+  "final response = await dio.get(", "StreamBuilder<",
+  "ListView.builder(itemBuilder: (context, index) =>"
+}
+
+-- Mixed code snippets for full-stack dev
+local codeSnippets = {
+  "async function fetchData() {", "const response = await axios.get(",
+  "try { const result = ", "} catch (error) { console.error(",
+  "interface UserDto {", "type ResponseType = {",
+  "import { Injectable } from '@nestjs/common';", "export default function",
+  "const [data, setData] = useState(", "useEffect(() => {",
+  "return { statusCode: 200,", "await repository.findOne(",
+}
+
+-- Browser search queries for developers
+local browserSearches = {
+  "nestjs documentation", "flutter widgets catalog", "dart async programming",
+  "nestjs typeorm relations", "flutter state management", "stackoverflow nestjs",
+  "flutter riverpod tutorial", "nestjs jwt authentication", "dart null safety",
+  "flutter bloc pattern", "nestjs middleware", "firebase flutter integration",
+  "nestjs swagger setup", "flutter responsive design", "docker nestjs production"
+}
+
+-- Regular text for notes/documents
+local documentText = {
+  "API endpoint documentation", "database schema design notes",
+  "mobile app feature requirements", "backend service architecture",
+  "sprint planning tasks", "code review comments and feedback",
+  "deployment checklist items", "bug fixes and improvements needed",
+  "user authentication flow", "data model relationships overview"
+}
+
+-- Communication text for Slack/Mail
+local messageText = {
+  "pushed the latest changes", "merged the PR, please review",
+  "deployment completed successfully", "found a bug in the API endpoint",
+  "updated the mobile UI components", "backend service is ready for testing",
+  "need help with flutter widget", "code review requested for nestjs module",
+  "completed the feature implementation", "database migration ran successfully"
+}
+
+-- Generate text based on app type
+local function getTextForApp(appName)
+  if appName:match("Terminal") or appName:match("iTerm") then
+    return terminalCommands[math.random(1, #terminalCommands)]
+  elseif appName:match("Code") or appName:match("Xcode") or appName:match("Sublime") or appName:match("Atom") then
+    -- Mix NestJS, Flutter, and general code snippets
+    local snippetType = math.random(1, 3)
+    if snippetType == 1 then
+      return nestjsSnippets[math.random(1, #nestjsSnippets)]
+    elseif snippetType == 2 then
+      return flutterSnippets[math.random(1, #flutterSnippets)]
+    else
+      return codeSnippets[math.random(1, #codeSnippets)]
+    end
+  elseif appName:match("Safari") or appName:match("Chrome") or appName:match("Firefox") then
+    return browserSearches[math.random(1, #browserSearches)]
+  elseif appName:match("Slack") or appName:match("Mail") or appName:match("Messages") then
+    return messageText[math.random(1, #messageText)]
+  elseif appName:match("Notes") or appName:match("TextEdit") or appName:match("Pages") then
+    return documentText[math.random(1, #documentText)]
+  else
+    -- Default to code snippets for developer
+    local snippetType = math.random(1, 3)
+    if snippetType == 1 then
+      return nestjsSnippets[math.random(1, #nestjsSnippets)]
+    elseif snippetType == 2 then
+      return flutterSnippets[math.random(1, #flutterSnippets)]
+    else
+      return codeSnippets[math.random(1, #codeSnippets)]
     end
   end
-  
-  return text
 end
 
 local function simulateTyping(text)
   for i = 1, #text do
     local char = text:sub(i, i)
-    hs.timer.usleep(math.random(50000, 150000)) -- 50-150ms per keystroke
+    -- Vary typing speed for realism: faster for common chars, slower for special chars
+    local delay = 50000
+    if char:match("[%p%d]") then
+      delay = math.random(80000, 180000) -- Slower for punctuation/numbers
+    else
+      delay = math.random(40000, 120000) -- Faster for letters
+    end
+    hs.timer.usleep(delay)
     hs.eventtap.keyStrokes(char)
+    
+    -- Occasionally pause mid-typing (thinking)
+    if math.random() > 0.92 and i < #text then
+      hs.timer.usleep(math.random(300000, 600000)) -- 300-600ms pause
+    end
+  end
+end
+
+local function deleteTypedText(textLength)
+  -- Select all typed text and delete
+  for _ = 1, textLength do
+    hs.eventtap.keyStroke({}, "delete")
+    hs.timer.usleep(math.random(25000, 40000)) -- Variable delete speed
   end
 end
 
@@ -71,19 +175,19 @@ end
 local function simulateActivity()
   lastSimulationTime = nowMs()
 
-  -- Always: tiny mouse movement
+  -- Always: tiny mouse movement (increased movement for more activity)
   local pos = hs.mouse.absolutePosition()
   hs.mouse.absolutePosition({
-    x = pos.x + math.random(-5, 5),
-    y = pos.y + math.random(-5, 5)
+    x = pos.x + math.random(-8, 8),
+    y = pos.y + math.random(-8, 8)
   })
 
   local action = math.random(1, 100)
 
   ------------------------------------------------
-  -- OPTION 1: Typing in focused app (30%)
+  -- OPTION 1: Typing in focused app (35% - increased)
   ------------------------------------------------
-  if action <= 30 and ENABLE_TYPING then
+  if action <= 35 and ENABLE_TYPING then
     local win = hs.window.focusedWindow()
     if win then
       local appName = win:application():name()
@@ -91,16 +195,26 @@ local function simulateActivity()
       if appName:match("Code") or appName:match("TextEdit") or 
          appName:match("Notes") or appName:match("Terminal") or
          appName:match("Safari") or appName:match("Chrome") or
-         appName:match("Slack") or appName:match("Mail") then
+         appName:match("Slack") or appName:match("Mail") or
+         appName:match("iTerm") or appName:match("Firefox") or
+         appName:match("Xcode") or appName:match("Sublime") or
+         appName:match("Pages") or appName:match("Messages") then
         
-        local text = typeRandomText()
+        -- Get intelligent text based on the app
+        local text = getTextForApp(appName)
+        local textLength = #text
+        
         hs.timer.doAfter(0.1, function()
           simulateTyping(text)
-          -- Always delete all typed text
-          hs.timer.doAfter(0.5, function()
-            for _ = 1, #text do
-              hs.eventtap.keyStroke({}, "delete")
-              hs.timer.usleep(80000)
+          -- Always delete the typed text after a short pause
+          hs.timer.doAfter(math.random(0.8, 1.5), function()
+            deleteTypedText(textLength)
+            -- Sometimes add extra actions after typing
+            if math.random() > 0.7 then
+              hs.timer.doAfter(0.2, function()
+                -- Scroll after typing (reading what was typed)
+                hs.eventtap.scrollWheel({ 0, math.random(-10,-3) }, {}, "pixel")
+              end)
             end
           end)
         end)
@@ -108,34 +222,33 @@ local function simulateActivity()
     end
 
   ------------------------------------------------
-  -- OPTION 2: Scroll (25%)
+  -- OPTION 2: Scroll (30% - increased)
   ------------------------------------------------
-  elseif action <= 55 then
-    local amount = ({ math.random(-8,-3), math.random(-15,-8), math.random(-25,-15) })[math.random(1,3)]
-    if math.random() > 0.85 then
-      hs.eventtap.scrollWheel({ math.random(-10,10), 0 }, {}, "pixel")
-    else
+  elseif action <= 65 then
+    -- More aggressive scrolling
+    local scrollType = math.random(1, 3)
+    if scrollType == 1 then
+      -- Single scroll
+      local amount = math.random(-30, -5)
       hs.eventtap.scrollWheel({ 0, amount }, {}, "pixel")
+    elseif scrollType == 2 then
+      -- Double scroll (rapid)
+      hs.eventtap.scrollWheel({ 0, math.random(-20,-8) }, {}, "pixel")
+      hs.timer.doAfter(0.1, function()
+        hs.eventtap.scrollWheel({ 0, math.random(-20,-8) }, {}, "pixel")
+      end)
+    else
+      -- Horizontal scroll
+      hs.eventtap.scrollWheel({ math.random(-15,15), 0 }, {}, "pixel")
     end
 
   ------------------------------------------------
-  -- OPTION 2: Scroll (25%)
+  -- OPTION 3: Cmd+Tab + scroll (15%)
   ------------------------------------------------
-  elseif action <= 55 then
-    local amount = ({ math.random(-8,-3), math.random(-15,-8), math.random(-25,-15) })[math.random(1,3)]
-    if math.random() > 0.85 then
-      hs.eventtap.scrollWheel({ math.random(-10,10), 0 }, {}, "pixel")
-    else
-      hs.eventtap.scrollWheel({ 0, amount }, {}, "pixel")
-    end
-
-  ------------------------------------------------
-  -- OPTION 3: Cmd+Tab + scroll (20%)
-  ------------------------------------------------
-  elseif action <= 75 then
+  elseif action <= 80 then
     hs.eventtap.event.newKeyEvent(hs.keycodes.map.cmd, true):post()
 
-    for _ = 1, math.random(1,3) do
+    for _ = 1, math.random(1,4) do -- More app switches
       hs.timer.usleep(100000)
       hs.eventtap.event.newKeyEvent(hs.keycodes.map.tab, true):post()
       hs.eventtap.event.newKeyEvent(hs.keycodes.map.tab, false):post()
@@ -146,20 +259,20 @@ local function simulateActivity()
     end)
 
     hs.timer.doAfter(0.3, function()
-      hs.eventtap.scrollWheel({ 0, math.random(-15,-5) }, {}, "pixel")
+      hs.eventtap.scrollWheel({ 0, math.random(-20,-8) }, {}, "pixel")
     end)
 
   ------------------------------------------------
-  -- OPTION 4: Smooth mouse movement (10%)
+  -- OPTION 4: Smooth mouse movement + clicks (8%)
   ------------------------------------------------
-  elseif action <= 85 then
+  elseif action <= 88 then
     local start = hs.mouse.absolutePosition()
     local target = {
-      x = start.x + math.random(-100,100),
-      y = start.y + math.random(-80,80)
+      x = start.x + math.random(-150,150), -- Larger movements
+      y = start.y + math.random(-100,100)
     }
 
-    local steps = math.random(5,10)
+    local steps = math.random(8,15) -- More steps for smoother movement
     for i = 1, steps do
       hs.timer.doAfter(0.02 * i, function()
         hs.mouse.absolutePosition({
@@ -168,20 +281,27 @@ local function simulateActivity()
         })
       end)
     end
+    
+    -- Sometimes click at the end of movement
+    if math.random() > 0.7 then
+      hs.timer.doAfter(0.02 * steps + 0.1, function()
+        hs.eventtap.leftClick(hs.mouse.absolutePosition())
+      end)
+    end
 
   ------------------------------------------------
-  -- OPTION 5: Mission Control (5%)
+  -- OPTION 5: Mission Control (4%)
   ------------------------------------------------
-  elseif action <= 90 and ENABLE_GLOBAL_UI then
+  elseif action <= 92 and ENABLE_GLOBAL_UI then
     hs.eventtap.keyStroke({"ctrl"}, "up")
     hs.timer.doAfter(0.8, function()
       hs.eventtap.keyStroke({}, "escape")
     end)
 
   ------------------------------------------------
-  -- OPTION 6: Window resize / move (4%)
+  -- OPTION 6: Window resize / move (3%)
   ------------------------------------------------
-  elseif action <= 94 then
+  elseif action <= 95 then
     local win = hs.window.focusedWindow()
     if win then
       local f = win:frame()
@@ -204,36 +324,48 @@ local function simulateActivity()
   elseif action <= 97 and ENABLE_GLOBAL_UI and ENABLE_TYPING then
     hs.eventtap.keyStroke({"cmd"}, "space")
     hs.timer.doAfter(0.3, function()
-      local searchTerms = {"calculator", "system", "activity", "finder", "safari", "notes"}
+      local searchTerms = {"calculator", "system preferences", "activity monitor", "finder", "safari", "notes", "terminal"}
       local term = searchTerms[math.random(1, #searchTerms)]
+      local termLength = #term
       simulateTyping(term)
-      hs.timer.doAfter(0.5, function()
+      -- Delete the search and close spotlight
+      hs.timer.doAfter(0.7, function()
+        deleteTypedText(termLength)
+        hs.timer.usleep(200000)
         hs.eventtap.keyStroke({}, "escape")
       end)
     end)
 
   ------------------------------------------------
-  -- OPTION 8: Copy/Paste/Select operations (2%)
+  -- OPTION 8: Copy/Paste/Select operations (3%)
   ------------------------------------------------
-  elseif action <= 99 then
+  elseif action <= 98 then
     local operations = {
       function() hs.eventtap.keyStroke({"cmd"}, "a") end, -- Select all
       function() hs.eventtap.keyStroke({"cmd"}, "c") end, -- Copy
+      function() hs.eventtap.keyStroke({"cmd"}, "f") end, -- Find
       function() 
         hs.eventtap.keyStroke({"shift"}, "left") 
         hs.timer.usleep(50000)
         hs.eventtap.keyStroke({"shift"}, "left") 
+        hs.eventtap.keyStroke({"shift"}, "left") 
       end, -- Select text
+      function()
+        hs.eventtap.keyStroke({"cmd"}, "left") -- Move to beginning of line
+        hs.timer.usleep(80000)
+        hs.eventtap.keyStroke({"shift", "cmd"}, "right") -- Select to end
+      end,
     }
     operations[math.random(1, #operations)]()
 
   ------------------------------------------------
-  -- OPTION 9: Rapid scroll burst (1%)
+  -- OPTION 9: Rapid scroll burst (2%)
   ------------------------------------------------
   else
-    for i = 1, math.random(3,5) do
-      hs.timer.doAfter(0.1 * i, function()
-        hs.eventtap.scrollWheel({ 0, math.random(-12,-5) }, {}, "pixel")
+    -- More intensive scroll bursts
+    for i = 1, math.random(4,8) do
+      hs.timer.doAfter(0.08 * i, function()
+        hs.eventtap.scrollWheel({ 0, math.random(-18,-8) }, {}, "pixel")
       end)
     end
   end
