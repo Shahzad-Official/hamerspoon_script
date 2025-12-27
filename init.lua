@@ -692,6 +692,7 @@ local function simulateActivity()
         end)
       end
     end
+  end -- Close main action if/elseif chain
 
   ------------------------------------------------
   -- (Mission Control disabled to prioritize typing)
@@ -700,7 +701,7 @@ local function simulateActivity()
   ------------------------------------------------
   -- OPTION 7: Window resize / move (2%)
   ------------------------------------------------
-  elseif action <= 97 then
+  if action <= 97 then
     local win = hs.window.focusedWindow()
     if win then
       local f = win:frame()
@@ -731,7 +732,7 @@ local function simulateActivity()
   ------------------------------------------------
   -- OPTION 8: Spotlight search with typing (1%)
   ------------------------------------------------
-  elseif action <= 98 and ENABLE_GLOBAL_UI and ENABLE_TYPING then
+  if action <= 98 and ENABLE_GLOBAL_UI and ENABLE_TYPING then
     hs.eventtap.keyStroke({"cmd"}, "space")
     hs.timer.doAfter(0.3, function()
       local searchTerms = {"calculator", "system preferences", "activity monitor", "finder", "safari", "notes", "terminal"}
@@ -749,7 +750,7 @@ local function simulateActivity()
   ------------------------------------------------
   -- OPTION 8: Copy/Paste/Select operations (5% - increased with auto-revert)
   ------------------------------------------------
-  elseif action <= 98 then
+  if action <= 98 then
     local operations = {
       function() 
         hs.eventtap.keyStroke({"cmd"}, "a") -- Select all
