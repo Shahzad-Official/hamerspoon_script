@@ -13,9 +13,9 @@ local IDLE_SECONDS = 5
 local SELF_EVENT_GRACE_MS = 1500 -- Increased to 1.5s to better distinguish self events
 local ENABLE_GLOBAL_UI = true -- Mission Control / Spotlight
 local ENABLE_TYPING = true -- Keyboard typing in apps
-local MIN_INTERVAL = 3 -- Reduced frequency for better user interaction
-local MAX_INTERVAL = 6 -- Reduced frequency for better user interaction
-local AUTO_REVERT_DELAY = 2.5 -- Seconds to wait before auto-reverting actions
+local MIN_INTERVAL = 1.5 -- More frequent activity for maximum counts
+local MAX_INTERVAL = 3 -- More frequent activity for maximum counts
+local AUTO_REVERT_DELAY = 0.8 -- Fast revert to avoid conflicts (0.8s)
 local ENABLE_AUTO_REVERT = true -- Automatically revert actions for humanized behavior
 local PRIORITY_APPS = {"Code", "Visual Studio Code"} -- VS Code is top priority
 local SECONDARY_APPS = {"Chrome", "Google Chrome"} -- Chrome secondary
@@ -149,36 +149,34 @@ local function addCodeComment()
   
   -- Go to end of current line and add new line
   hs.eventtap.keyStroke({"cmd"}, "right")
-  hs.timer.usleep(50000)
+  hs.timer.usleep(30000) -- Faster
   hs.eventtap.keyStroke({}, "return")
-  hs.timer.usleep(100000)
+  hs.timer.usleep(50000) -- Faster
   
-  -- Type the comment character by character
+  -- Type the comment faster (counts as more keystrokes)
   for i = 1, #comment do
     local char = comment:sub(i, i)
     hs.eventtap.keyStrokes(char)
-    hs.timer.usleep(math.random(40000, 80000))
+    hs.timer.usleep(math.random(20000, 40000)) -- Faster typing
   end
   
-  -- Wait then undo the comment using Cmd+Z (realistic undo behavior)
+  -- Quick undo using Cmd+Z (faster revert)
   hs.timer.doAfter(AUTO_REVERT_DELAY, function()
     -- Use Cmd+Z to undo - this works with editor's undo system
     hs.eventtap.keyStroke({"cmd"}, "z")
-    hs.timer.usleep(100000)
+    hs.timer.usleep(50000)
     -- Undo again to remove the newline
     hs.eventtap.keyStroke({"cmd"}, "z")
     
     -- Add scrolling after undo (simulates reading the code)
-    hs.timer.doAfter(0.3, function()
-      local scrollAmount = math.random(-25, -8)
+    hs.timer.doAfter(0.2, function()
+      local scrollAmount = math.random(-20, -5)
       hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
       
-      -- Sometimes scroll back
-      if math.random() > 0.5 then
-        hs.timer.doAfter(1.5, function()
-          hs.eventtap.scrollWheel({ 0, -scrollAmount }, {}, "pixel")
-        end)
-      end
+      -- Always scroll back for clean revert
+      hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+        hs.eventtap.scrollWheel({ 0, -scrollAmount }, {}, "pixel")
+      end)
     end)
   end)
 end
@@ -260,19 +258,19 @@ end
 local function simulateTyping(text)
   for i = 1, #text do
     local char = text:sub(i, i)
-    -- Vary typing speed for realism: faster for common chars, slower for special chars
-    local delay = 50000
+    -- Faster typing for more activity counts
+    local delay = 30000
     if char:match("[%p%d]") then
-      delay = math.random(80000, 180000) -- Slower for punctuation/numbers
+      delay = math.random(40000, 80000) -- Faster for punctuation/numbers
     else
-      delay = math.random(40000, 120000) -- Faster for letters
+      delay = math.random(20000, 60000) -- Faster for letters
     end
     hs.timer.usleep(delay)
     hs.eventtap.keyStrokes(char)
     
-    -- Occasionally pause mid-typing (thinking)
-    if math.random() > 0.92 and i < #text then
-      hs.timer.usleep(math.random(300000, 600000)) -- 300-600ms pause
+    -- Less frequent pauses for more consistent activity
+    if math.random() > 0.95 and i < #text then
+      hs.timer.usleep(math.random(150000, 300000)) -- Shorter pauses
     end
   end
 end
@@ -408,19 +406,23 @@ local function simulateActivity()
     hs.timer.usleep(500000) -- Wait 500ms for app to focus
   end
 
-  -- Always: tiny mouse movement (increased movement for more activity)
-  local pos = hs.mouse.absolutePosition()
+  -- Always: mouse movement that reverts (counts as activity)
+  local originalPos = hs.mouse.absolutePosition()
   hs.mouse.absolutePosition({
-    x = pos.x + math.random(-8, 8),
-    y = pos.y + math.random(-8, 8)
+    x = originalPos.x + math.random(-12, 12),
+    y = originalPos.y + math.random(-12, 12)
   })
+  -- Revert mouse position after delay
+  hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+    hs.mouse.absolutePosition(originalPos)
+  end)
 
   local action = math.random(1, 100)
 
   ------------------------------------------------
-  -- OPTION 1: Add comments in VS Code / Type in other apps (25%)
+  -- OPTION 1: Add comments in VS Code / Type in other apps (40% - increased for more activity)
   ------------------------------------------------
-  if action <= 25 and ENABLE_TYPING then
+  if action <= 40 and ENABLE_TYPING then
     local win = hs.window.focusedWindow()
     if win then
       local appName = win:application():name()
@@ -500,9 +502,9 @@ local function simulateActivity()
     end
 
   ------------------------------------------------
-  -- OPTION 2: Scroll (35% - increased since typing reduced)
+  -- OPTION 2: Scroll (30% - optimized)
   ------------------------------------------------
-  elseif action <= 60 then
+  elseif action <= 70 then
     -- More aggressive scrolling
     local scrollType = math.random(1, 3)
     if scrollType == 1 then
@@ -548,9 +550,9 @@ local function simulateActivity()
     end
 
   ------------------------------------------------
-  -- OPTION 3: Cmd+Tab + scroll (10%)
+  -- OPTION 3: Cmd+Tab + scroll (15% - increased for more activity)
   ------------------------------------------------
-  elseif action <= 80 then
+  elseif action <= 85 then
     -- Heavily favor switching to VS Code
     if math.random() > 0.3 then
       focusPriorityApp() -- 70% chance to go straight to VS Code/Chrome
@@ -674,23 +676,55 @@ local function simulateActivity()
     end)
 
   ------------------------------------------------
-  -- OPTION 8: Copy/Paste/Select operations (3%)
+  -- OPTION 8: Copy/Paste/Select operations (5% - increased with auto-revert)
   ------------------------------------------------
   elseif action <= 98 then
     local operations = {
-      function() hs.eventtap.keyStroke({"cmd"}, "a") end, -- Select all
-      function() hs.eventtap.keyStroke({"cmd"}, "c") end, -- Copy
-      function() hs.eventtap.keyStroke({"cmd"}, "f") end, -- Find
+      function() 
+        hs.eventtap.keyStroke({"cmd"}, "a") -- Select all
+        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+          hs.eventtap.keyStroke({}, "right") -- Deselect
+        end)
+      end,
+      function() 
+        hs.eventtap.keyStroke({"cmd"}, "c") -- Copy (safe, no visual change)
+      end,
+      function() 
+        hs.eventtap.keyStroke({"cmd"}, "f") -- Find
+        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+          hs.eventtap.keyStroke({}, "escape") -- Close find
+        end)
+      end,
       function() 
         hs.eventtap.keyStroke({"shift"}, "left") 
         hs.timer.usleep(50000)
         hs.eventtap.keyStroke({"shift"}, "left") 
         hs.eventtap.keyStroke({"shift"}, "left") 
-      end, -- Select text
+        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+          hs.eventtap.keyStroke({}, "right") -- Deselect
+        end)
+      end,
       function()
-        hs.eventtap.keyStroke({"cmd"}, "left") -- Move to beginning of line
+        hs.eventtap.keyStroke({"cmd"}, "left") -- Move to beginning
         hs.timer.usleep(80000)
         hs.eventtap.keyStroke({"shift", "cmd"}, "right") -- Select to end
+        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+          hs.eventtap.keyStroke({}, "right") -- Deselect
+        end)
+      end,
+      function()
+        -- Quick navigation that counts as activity
+        hs.eventtap.keyStroke({"cmd"}, "up") -- Go to top
+        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+          hs.eventtap.keyStroke({"cmd"}, "z") -- Undo navigation if it changed something
+        end)
+      end,
+      function()
+        -- Open/close sidebar (VS Code command palette)
+        hs.eventtap.keyStroke({"cmd"}, "b") -- Toggle sidebar
+        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+          hs.eventtap.keyStroke({"cmd"}, "b") -- Toggle back
+        end)
       end,
     }
     operations[math.random(1, #operations)]()
