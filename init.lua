@@ -551,7 +551,7 @@ local function simulateActivity()
       hs.timer.doAfter(0.4, function()
         hs.eventtap.keyStroke({}, "escape")
       end)
-    end
+    end -- Close clickType if statement
 
   ------------------------------------------------
   -- OPTION 3: Add code comments in VS Code (10% - additional typing)
