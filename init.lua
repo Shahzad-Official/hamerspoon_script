@@ -96,15 +96,13 @@ local function simulateActivity()
         local text = typeRandomText()
         hs.timer.doAfter(0.1, function()
           simulateTyping(text)
-          -- Random backspace/delete
-          if math.random() > 0.6 then
-            hs.timer.doAfter(0.5, function()
-              for _ = 1, math.random(1, #text) do
-                hs.eventtap.keyStroke({}, "delete")
-                hs.timer.usleep(80000)
-              end
-            end)
-          end
+          -- Always delete all typed text
+          hs.timer.doAfter(0.5, function()
+            for _ = 1, #text do
+              hs.eventtap.keyStroke({}, "delete")
+              hs.timer.usleep(80000)
+            end
+          end)
         end)
       end
     end
