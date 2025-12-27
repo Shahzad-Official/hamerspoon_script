@@ -47,7 +47,7 @@ Clone this repository directly into your Hammerspoon configuration directory:
 [ -d ~/.hammerspoon ] && mv ~/.hammerspoon ~/.hammerspoon.backup
 
 # Clone this repository
-git clone git@github.com:Shahzad-Official/hamerspoon_script.git ~/.hammerspoon
+git clone https://github.com/Shahzad-Official/hamerspoon_script.git ~/.hammerspoon
 
 # Reload Hammerspoon configuration
 # Method 1: Via command line
@@ -63,7 +63,7 @@ If you already have a Hammerspoon configuration:
 
 ```bash
 # Clone to a temporary location
-git clone git@github.com:Shahzad-Official/hamerspoon_script.git /tmp/hamerspoon_script
+git clone https://github.com/Shahzad-Official/hamerspoon_script.git /tmp/hamerspoon_script
 
 # Copy or merge the init.lua file
 cp /tmp/hamerspoon_script/init.lua ~/.hammerspoon/
