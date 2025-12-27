@@ -27,6 +27,13 @@ You must have [Hammerspoon](https://www.hammerspoon.org/) installed on your Mac.
 ```bash
 # Install Hammerspoon via Homebrew
 brew install --cask hammerspoon
+
+# Launch Hammerspoon (first time only)
+open -a Hammerspoon
+
+# Grant Accessibility permissions when prompted
+# Go to: System Settings → Privacy & Security → Accessibility
+# Enable Hammerspoon
 ```
 
 ## Installation
@@ -36,15 +43,18 @@ brew install --cask hammerspoon
 Clone this repository directly into your Hammerspoon configuration directory:
 
 ```bash
-# Backup existing config if you have one
-mv ~/.hammerspoon ~/.hammerspoon.backup
+# Backup existing config if you have one (if it exists)
+[ -d ~/.hammerspoon ] && mv ~/.hammerspoon ~/.hammerspoon.backup
 
 # Clone this repository
-git clone https://github.com/yourusername/hammerspoon_script.git ~/.hammerspoon
+git clone git@github.com:Shahzad-Official/hamerspoon_script.git ~/.hammerspoon
 
-# Reload Hammerspoon config
-# You can do this from the Hammerspoon menu bar icon or run:
+# Reload Hammerspoon configuration
+# Method 1: Via command line
 open -g "hammerspoon://reload"
+
+# Method 2: Click the Hammerspoon icon in menu bar → Reload Config
+# Method 3: If Hammerspoon is not running, launch it from Applications
 ```
 
 ### Option 2: Copy File
@@ -53,12 +63,12 @@ If you already have a Hammerspoon configuration:
 
 ```bash
 # Clone to a temporary location
-git clone https://github.com/yourusername/hammerspoon_script.git /tmp/hammerspoon_script
+git clone git@github.com:Shahzad-Official/hamerspoon_script.git /tmp/hamerspoon_script
 
 # Copy or merge the init.lua file
-cp /tmp/hammerspoon_script/init.lua ~/.hammerspoon/
+cp /tmp/hamerspoon_script/init.lua ~/.hammerspoon/
 
-# Reload Hammerspoon
+# Reload Hammerspoon configuration
 open -g "hammerspoon://reload"
 ```
 
