@@ -10,7 +10,7 @@ math.randomseed(os.time())
 -- CONFIG
 --------------------------------------------------
 local IDLE_SECONDS = 5
-local SELF_EVENT_GRACE_MS = 1500 -- Increased to 1.5s to better distinguish self events
+local SELF_EVENT_GRACE_MS = 3000 -- Increased to 3s to better prevent self-pause
 local ENABLE_GLOBAL_UI = true -- Mission Control / Spotlight
 local ENABLE_TYPING = true -- Keyboard typing in apps
 local MIN_INTERVAL = 1.5 -- More frequent activity for maximum counts
@@ -391,9 +391,14 @@ end
 --------------------------------------------------
 local function simulateActivity()
   -- Skip if user is active
-  if isPausedByUser then return end
+  if isPausedByUser then 
+    print("⏸ Skipped - user is active")
+    return 
+  end
   
+  -- Mark this as simulated activity FIRST to prevent self-pause
   lastSimulationTime = nowMs()
+  print("✓ Executing activity...")
 
   -- Focus priority apps less frequently (60% chance)
   if math.random(1, 100) <= PRIORITY_APP_FOCUS_CHANCE then
@@ -418,6 +423,7 @@ local function simulateActivity()
   -- OPTION 1: Type text and revert in ANY app (40% - increased for more activity)
   ------------------------------------------------
   if action <= 40 and ENABLE_TYPING then
+    lastSimulationTime = nowMs() -- Prevent self-pause during typing
     local win = hs.window.focusedWindow()
     if win then
       local appName = win:application():name()
@@ -442,6 +448,7 @@ local function simulateActivity()
   -- OPTION 2: Add code comments in VS Code (15% - additional typing for VS Code)
   ------------------------------------------------
   elseif action <= 55 then
+    lastSimulationTime = nowMs() -- Prevent self-pause
     local win = hs.window.focusedWindow()
     if win and isVSCode(win:application():name()) then
       addCodeComment()
@@ -460,6 +467,7 @@ local function simulateActivity()
   -- OPTION 3: Scroll (20% - optimized)
   ------------------------------------------------
   elseif action <= 75 then
+    lastSimulationTime = nowMs() -- Prevent self-pause
     -- More aggressive scrolling
     local scrollType = math.random(1, 3)
     if scrollType == 1 then
@@ -505,28 +513,31 @@ local function simulateActivity()
     end
 
   ------------------------------------------------
-  -- OPTION 4: Cmd+Tab + scroll (12% - increased for more activity)
+  -- OPTION 4: Cmd+Tab window switching (12% - increased for more activity)
   ------------------------------------------------
   elseif action <= 87 then
-    -- Heavily favor switching to VS Code
+    -- Update timestamp to prevent self-pause during Cmd+Tab
+    lastSimulationTime = nowMs()
+    
+    -- Method 1: Use Cmd+Tab (70% of the time)
     if math.random() > 0.3 then
-      focusPriorityApp() -- 70% chance to go straight to VS Code/Chrome
-      hs.timer.usleep(300000)
-    else
-      hs.eventtap.event.newKeyEvent(hs.keycodes.map.cmd, true):post()
-
-      for _ = 1, math.random(1,3) do
-        hs.timer.usleep(100000)
-        hs.eventtap.event.newKeyEvent(hs.keycodes.map.tab, true):post()
-        hs.eventtap.event.newKeyEvent(hs.keycodes.map.tab, false):post()
+      -- Proper Cmd+Tab implementation
+      hs.eventtap.keyStroke({"cmd"}, "tab")
+      hs.timer.usleep(150000)
+      
+      -- Sometimes tab multiple times
+      if math.random() > 0.5 then
+        hs.eventtap.keyStroke({"cmd"}, "tab")
       end
-
-      hs.timer.doAfter(0.15, function()
-        hs.eventtap.event.newKeyEvent(hs.keycodes.map.cmd, false):post()
-      end)
+    else
+      -- Method 2: Direct app activation (30% of the time)
+      focusPriorityApp()
+      hs.timer.usleep(300000)
     end
 
-    hs.timer.doAfter(0.3, function()
+    -- Scroll after switching
+    hs.timer.doAfter(0.4, function()
+      lastSimulationTime = nowMs() -- Prevent pause
       hs.eventtap.scrollWheel({ 0, math.random(-20,-8) }, {}, "pixel")
     end)
 
@@ -534,6 +545,7 @@ local function simulateActivity()
   -- OPTION 5: Smooth mouse movement + clicks (6%)
   ------------------------------------------------
   elseif action <= 93 then
+    lastSimulationTime = nowMs() -- Prevent self-pause
     local start = hs.mouse.absolutePosition()
     local target = {
       x = start.x + math.random(-150,150), -- Larger movements
@@ -724,7 +736,7 @@ end
 local function startAutomation()
   if activityTimer then return end
   scheduleNext()
- -- hs.alert.show("▶ Activity automation running")
+  hs.alert.show("▶ Activity automation running", 1)
 end
 
 local function stopAutomation()
