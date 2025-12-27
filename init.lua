@@ -13,14 +13,14 @@ local IDLE_SECONDS = 5
 local SELF_EVENT_GRACE_MS = 3000 -- Increased to 3s to better prevent self-pause
 local ENABLE_GLOBAL_UI = true -- Mission Control / Spotlight
 local ENABLE_TYPING = true -- Keyboard typing in apps
-local MIN_INTERVAL = 1.5 -- More frequent activity for maximum counts
-local MAX_INTERVAL = 3 -- More frequent activity for maximum counts
+local MIN_INTERVAL = 2 -- Balanced for natural activity
+local MAX_INTERVAL = 5 -- Balanced for natural activity
 local AUTO_REVERT_DELAY = 0.8 -- Fast revert to avoid conflicts (0.8s)
 local ENABLE_AUTO_REVERT = true -- Automatically revert actions for humanized behavior
 local PRIORITY_APPS = {"Code", "Visual Studio Code"} -- VS Code is top priority
 local SECONDARY_APPS = {"Chrome", "Google Chrome"} -- Chrome secondary
-local VSCODE_FOCUS_CHANCE = 70 -- 70% chance to focus VS Code specifically
-local PRIORITY_APP_FOCUS_CHANCE = 60 -- Overall chance to focus priority apps
+local VSCODE_FOCUS_CHANCE = 85 -- 85% chance to focus VS Code specifically
+local PRIORITY_APP_FOCUS_CHANCE = 75 -- Overall chance to focus priority apps
 
 --------------------------------------------------
 -- STATE
@@ -420,9 +420,9 @@ local function simulateActivity()
   local action = math.random(1, 100)
 
   ------------------------------------------------
-  -- OPTION 1: Type text and revert in ANY app (40% - increased for more activity)
+  -- OPTION 1: Type text and revert in ANY app (45% - TOP PRIORITY)
   ------------------------------------------------
-  if action <= 40 and ENABLE_TYPING then
+  if action <= 45 and ENABLE_TYPING then
     lastSimulationTime = nowMs() -- Prevent self-pause during typing
     local win = hs.window.focusedWindow()
     if win then
@@ -445,9 +445,118 @@ local function simulateActivity()
     end
 
   ------------------------------------------------
-  -- OPTION 2: Add code comments in VS Code (15% - additional typing for VS Code)
+  -- OPTION 2: Click actions - buttons, UI elements, tabs (35% - EQUAL PRIORITY)
   ------------------------------------------------
-  elseif action <= 55 then
+  elseif action <= 80 then
+    lastSimulationTime = nowMs() -- Prevent self-pause
+    local originalPos = hs.mouse.absolutePosition()
+    
+    -- Different types of click interactions
+    local clickType = math.random(1, 5)
+    
+    if clickType == 1 then
+      -- Single click at current position (like selecting text or clicking UI)
+      addToHistory("click", { type = "single", pos = originalPos })
+      hs.eventtap.leftClick(originalPos)
+      
+    elseif clickType == 2 then
+      -- Double click (like selecting word or opening file)
+      addToHistory("click", { type = "double", pos = originalPos })
+      hs.eventtap.leftClick(originalPos)
+      hs.timer.usleep(50000)
+      hs.eventtap.leftClick(originalPos)
+      
+    elseif clickType == 3 then
+      -- Move and click (like clicking a button or tab)
+      local target = {
+        x = originalPos.x + math.random(-200, 200),
+        y = originalPos.y + math.random(-100, 100)
+      }
+      
+      -- Smooth movement to target
+      local steps = math.random(5, 10)
+      for i = 1, steps do
+        hs.timer.doAfter(0.02 * i, function()
+          hs.mouse.absolutePosition({
+            x = originalPos.x + (target.x - originalPos.x) * (i / steps),
+            y = originalPos.y + (target.y - originalPos.y) * (i / steps)
+          })
+        end)
+      end
+      
+      -- Click at target position
+      hs.timer.doAfter(0.02 * steps + 0.05, function()
+        addToHistory("click", { type = "move_and_click", pos = target, original = originalPos })
+        hs.eventtap.leftClick(target)
+        
+        -- Auto-revert: move back to original position
+        if ENABLE_AUTO_REVERT then
+          hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+            for j = 1, steps do
+              hs.timer.doAfter(0.02 * j, function()
+                local currentPos = hs.mouse.absolutePosition()
+                hs.mouse.absolutePosition({
+                  x = currentPos.x + (originalPos.x - currentPos.x) * (j / steps),
+                  y = currentPos.y + (originalPos.y - currentPos.y) * (j / steps)
+                })
+              end)
+            end
+          end)
+        end
+      end)
+      
+    elseif clickType == 4 then
+      -- Click and drag (like selecting text or resizing)
+      local dragTarget = {
+        x = originalPos.x + math.random(-100, 100),
+        y = originalPos.y + math.random(-50, 50)
+      }
+      
+      addToHistory("click", { type = "drag", start = originalPos, target = dragTarget })
+      
+      -- Perform drag
+      hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.leftMouseDown, originalPos):post()
+      hs.timer.usleep(50000)
+      
+      -- Drag to target
+      local steps = 8
+      for i = 1, steps do
+        hs.timer.doAfter(0.03 * i, function()
+          local dragPos = {
+            x = originalPos.x + (dragTarget.x - originalPos.x) * (i / steps),
+            y = originalPos.y + (dragTarget.y - originalPos.y) * (i / steps)
+          }
+          hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.leftMouseDragged, dragPos):post()
+        end)
+      end
+      
+      -- Release mouse
+      hs.timer.doAfter(0.03 * steps + 0.05, function()
+        hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.leftMouseUp, dragTarget):post()
+        
+        -- Auto-revert: move back
+        if ENABLE_AUTO_REVERT then
+          hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+            hs.mouse.absolutePosition(originalPos)
+          end)
+        end
+      end)
+      
+    else
+      -- Right click (context menu)
+      addToHistory("click", { type = "right", pos = originalPos })
+      hs.eventtap.rightClick(originalPos)
+      
+      -- Close context menu with Escape
+      hs.timer.doAfter(0.4, function()
+        hs.eventtap.keyStroke({}, "escape")
+      end)
+    end
+
+  ------------------------------------------------
+  -- OPTION 3: Add code comments in VS Code (10% - additional typing)
+  ------------------------------------------------
+  elseif action <= 90 then
     lastSimulationTime = nowMs() -- Prevent self-pause
     local win = hs.window.focusedWindow()
     if win and isVSCode(win:application():name()) then
@@ -464,9 +573,9 @@ local function simulateActivity()
     end
 
   ------------------------------------------------
-  -- OPTION 3: Scroll (20% - optimized)
+  -- OPTION 4: Scroll (5% - reduced)
   ------------------------------------------------
-  elseif action <= 75 then
+  elseif action <= 95 then
     lastSimulationTime = nowMs() -- Prevent self-pause
     -- More aggressive scrolling
     local scrollType = math.random(1, 3)
@@ -513,9 +622,9 @@ local function simulateActivity()
     end
 
   ------------------------------------------------
-  -- OPTION 4: Cmd+Tab window switching (12% - increased for more activity)
+  -- OPTION 5: Cmd+Tab window switching (3% - minimal)
   ------------------------------------------------
-  elseif action <= 87 then
+  elseif action <= 98 then
     -- Update timestamp to prevent self-pause during Cmd+Tab
     lastSimulationTime = nowMs()
     
@@ -542,9 +651,9 @@ local function simulateActivity()
     end)
 
   ------------------------------------------------
-  -- OPTION 5: Smooth mouse movement + clicks (6%)
+  -- OPTION 6: Smooth mouse movement (2% - fallback)
   ------------------------------------------------
-  elseif action <= 93 then
+  else
     lastSimulationTime = nowMs() -- Prevent self-pause
     local start = hs.mouse.absolutePosition()
     local target = {
@@ -585,15 +694,8 @@ local function simulateActivity()
     end
 
   ------------------------------------------------
-  -- OPTION 5: Mission Control (5%)
+  -- (Mission Control disabled to prioritize typing)
   ------------------------------------------------
-  elseif action <= 90 and ENABLE_GLOBAL_UI then
-    pendingAction = "mission_control"
-    hs.eventtap.keyStroke({"ctrl"}, "up")
-    hs.timer.doAfter(0.8, function()
-      hs.eventtap.keyStroke({}, "escape")
-      pendingAction = nil
-    end)
 
   ------------------------------------------------
   -- OPTION 7: Window resize / move (2%)
