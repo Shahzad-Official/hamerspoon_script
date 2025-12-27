@@ -15,6 +15,8 @@ local ENABLE_GLOBAL_UI = true -- Mission Control / Spotlight
 local ENABLE_TYPING = true -- Keyboard typing in apps
 local MIN_INTERVAL = 3 -- Reduced frequency for better user interaction
 local MAX_INTERVAL = 6 -- Reduced frequency for better user interaction
+local AUTO_REVERT_DELAY = 2.5 -- Seconds to wait before auto-reverting actions
+local ENABLE_AUTO_REVERT = true -- Automatically revert actions for humanized behavior
 local PRIORITY_APPS = {"Code", "Visual Studio Code"} -- VS Code is top priority
 local SECONDARY_APPS = {"Chrome", "Google Chrome"} -- Chrome secondary
 local VSCODE_FOCUS_CHANCE = 70 -- 70% chance to focus VS Code specifically
@@ -27,6 +29,8 @@ local activityTimer = nil
 local resumeTimer = nil
 local isPausedByUser = false
 local lastSimulationTime = 0
+local actionHistory = {} -- Store history of actions for undo
+local MAX_HISTORY = 10 -- Keep last 10 actions
 
 --------------------------------------------------
 -- TIME (MONOTONIC)
@@ -139,6 +143,9 @@ local codeComments = {
 -- Function to add comment in code
 local function addCodeComment()
   local comment = codeComments[math.random(1, #codeComments)]
+  
+  -- Track this action for undo
+  addToHistory("comment", { text = comment })
   
   -- Navigate down 5 lines
   for _ = 1, 5 do
@@ -287,6 +294,61 @@ local function deleteTypedText(textLength)
 end
 
 --------------------------------------------------
+-- UNDO/REVERT FUNCTIONALITY
+--------------------------------------------------
+local function addToHistory(actionType, data)
+  table.insert(actionHistory, 1, {
+    type = actionType,
+    data = data,
+    timestamp = os.time()
+  })
+  
+  -- Keep history size limited
+  if #actionHistory > MAX_HISTORY then
+    table.remove(actionHistory, #actionHistory)
+  end
+end
+
+local function undoLastAction()
+  if #actionHistory == 0 then
+    hs.alert.show("⚠️ No actions to undo", 1)
+    return
+  end
+  
+  local lastAction = table.remove(actionHistory, 1)
+  
+  if lastAction.type == "typing" then
+    -- Undo typing by sending Cmd+Z
+    hs.eventtap.keyStroke({"cmd"}, "z")
+    hs.alert.show("⎌ Undone: " .. lastAction.type, 0.8)
+  elseif lastAction.type == "comment" then
+    -- Undo comment addition
+    hs.eventtap.keyStroke({"cmd"}, "z")
+    hs.alert.show("⎌ Undone: comment", 0.8)
+  elseif lastAction.type == "window_resize" and lastAction.data then
+    -- Restore previous window frame
+    local win = hs.window.focusedWindow()
+    if win then
+      win:setFrame(lastAction.data.originalFrame, 0.2)
+      hs.alert.show("⎌ Undone: window resize", 0.8)
+    end
+  elseif lastAction.type == "scroll" then
+    -- Reverse scroll
+    if lastAction.data then
+      hs.eventtap.scrollWheel({ 0, -lastAction.data.amount }, {}, "pixel")
+      hs.alert.show("⎌ Undone: scroll", 0.8)
+    end
+  else
+    hs.alert.show("⎌ Undone: " .. lastAction.type, 0.8)
+  end
+end
+
+local function clearHistory()
+  actionHistory = {}
+  hs.alert.show("🗑️ Action history cleared", 1)
+end
+
+--------------------------------------------------
 -- PRIORITY APP HELPERS
 --------------------------------------------------
 local function isPriorityApp(appName)
@@ -375,6 +437,9 @@ local function simulateActivity()
         local text = getTextForApp(appName)
         local textLength = #text
         
+        -- Track this action for undo
+        addToHistory("typing", { text = text, app = appName })
+        
         -- Extra typing for priority apps, especially VS Code
         local typeCount = 1
         if isPriorityApp(appName) then
@@ -397,17 +462,24 @@ local function simulateActivity()
                 end)
               end)
             else
-              -- Final deletion after last typing
-              hs.timer.doAfter(math.random(1.0, 1.8), function()
-                deleteTypedText(textLength)
-                -- Sometimes add extra actions after typing
-                if math.random() > 0.7 then
-                  hs.timer.doAfter(0.2, function()
-                    -- Scroll after typing (reading what was typed)
-                    hs.eventtap.scrollWheel({ 0, math.random(-10,-3) }, {}, "pixel")
-                  end)
-                end
-              end)
+              -- Final auto-revert after last typing (humanized behavior)
+              if ENABLE_AUTO_REVERT then
+                hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+                  deleteTypedText(textLength)
+                  -- Sometimes add extra actions after typing
+                  if math.random() > 0.7 then
+                    hs.timer.doAfter(0.2, function()
+                      -- Scroll after typing (reading what was typed)
+                      hs.eventtap.scrollWheel({ 0, math.random(-10,-3) }, {}, "pixel")
+                    end)
+                  end
+                end)
+              else
+                -- Old behavior: immediate deletion
+                hs.timer.doAfter(math.random(1.0, 1.8), function()
+                  deleteTypedText(textLength)
+                end)
+              end
             end
           end
           
@@ -425,16 +497,43 @@ local function simulateActivity()
     if scrollType == 1 then
       -- Single scroll
       local amount = math.random(-30, -5)
+      addToHistory("scroll", { amount = amount })
       hs.eventtap.scrollWheel({ 0, amount }, {}, "pixel")
+      
+      -- Auto-revert: scroll back after delay
+      if ENABLE_AUTO_REVERT then
+        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+          hs.eventtap.scrollWheel({ 0, -amount }, {}, "pixel")
+        end)
+      end
     elseif scrollType == 2 then
       -- Double scroll (rapid)
-      hs.eventtap.scrollWheel({ 0, math.random(-20,-8) }, {}, "pixel")
+      local amount1 = math.random(-20,-8)
+      local amount2 = math.random(-20,-8)
+      addToHistory("scroll", { amount = amount1 + amount2 })
+      hs.eventtap.scrollWheel({ 0, amount1 }, {}, "pixel")
       hs.timer.doAfter(0.1, function()
-        hs.eventtap.scrollWheel({ 0, math.random(-20,-8) }, {}, "pixel")
+        hs.eventtap.scrollWheel({ 0, amount2 }, {}, "pixel")
+        
+        -- Auto-revert: scroll back after delay
+        if ENABLE_AUTO_REVERT then
+          hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+            hs.eventtap.scrollWheel({ 0, -(amount1 + amount2) }, {}, "pixel")
+          end)
+        end
       end)
     else
       -- Horizontal scroll
-      hs.eventtap.scrollWheel({ math.random(-15,15), 0 }, {}, "pixel")
+      local amount = math.random(-15,15)
+      addToHistory("scroll", { amount = amount, horizontal = true })
+      hs.eventtap.scrollWheel({ amount, 0 }, {}, "pixel")
+      
+      -- Auto-revert: scroll back after delay
+      if ENABLE_AUTO_REVERT then
+        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+          hs.eventtap.scrollWheel({ -amount, 0 }, {}, "pixel")
+        end)
+      end
     end
 
   ------------------------------------------------
@@ -483,11 +582,26 @@ local function simulateActivity()
       end)
     end
     
-    -- Sometimes click at the end of movement
-    if math.random() > 0.7 then
-      hs.timer.doAfter(0.02 * steps + 0.1, function()
-        hs.eventtap.leftClick(hs.mouse.absolutePosition())
+    -- Auto-revert: move mouse back to start after delay
+    if ENABLE_AUTO_REVERT then
+      hs.timer.doAfter(AUTO_REVERT_DELAY + 0.3, function()
+        for i = 1, steps do
+          hs.timer.doAfter(0.02 * i, function()
+            local currentPos = hs.mouse.absolutePosition()
+            hs.mouse.absolutePosition({
+              x = currentPos.x + (start.x - currentPos.x) * (i / steps),
+              y = currentPos.y + (start.y - currentPos.y) * (i / steps)
+            })
+          end)
+        end
       end)
+    else
+      -- Sometimes click at the end of movement (old behavior)
+      if math.random() > 0.7 then
+        hs.timer.doAfter(0.02 * steps + 0.1, function()
+          hs.eventtap.leftClick(hs.mouse.absolutePosition())
+        end)
+      end
     end
 
   ------------------------------------------------
@@ -506,6 +620,7 @@ local function simulateActivity()
     local win = hs.window.focusedWindow()
     if win then
       local f = win:frame()
+      local originalFrame = hs.geometry.copy(f) -- Save original
       local s = win:screen():frame()
 
       if math.random() > 0.5 then
@@ -516,7 +631,17 @@ local function simulateActivity()
         f.y = math.max(s.y, math.min(s.y + s.h - f.h, f.y + math.random(-30,30)))
       end
 
+      addToHistory("window_resize", { originalFrame = originalFrame })
       win:setFrame(f, 0.2)
+      
+      -- Auto-revert: restore window after delay
+      if ENABLE_AUTO_REVERT then
+        hs.timer.doAfter(AUTO_REVERT_DELAY + 0.5, function()
+          if win and win:isVisible() then
+            win:setFrame(originalFrame, 0.2)
+          end
+        end)
+      end
     end
 
   ------------------------------------------------
@@ -564,9 +689,20 @@ local function simulateActivity()
   ------------------------------------------------
   else
     -- More intensive scroll bursts
-    for i = 1, math.random(4,8) do
+    local burstCount = math.random(4,8)
+    local totalScroll = 0
+    for i = 1, burstCount do
       hs.timer.doAfter(0.08 * i, function()
-        hs.eventtap.scrollWheel({ 0, math.random(-18,-8) }, {}, "pixel")
+        local scrollAmount = math.random(-18,-8)
+        totalScroll = totalScroll + scrollAmount
+        hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
+      end)
+    end
+    
+    -- Auto-revert: scroll back after burst
+    if ENABLE_AUTO_REVERT then
+      hs.timer.doAfter(AUTO_REVERT_DELAY + 0.8, function()
+        hs.eventtap.scrollWheel({ 0, -totalScroll }, {}, "pixel")
       end)
     end
   end
@@ -657,6 +793,36 @@ hs.hotkey.bind({"cmd","alt","ctrl"}, "S", function()
     hs.alert.show("⛔ Automation stopped")
   else
     startAutomation()
+  end
+end)
+
+--------------------------------------------------
+-- UNDO HOTKEY (Cmd+Shift+Z)
+--------------------------------------------------
+hs.hotkey.bind({"cmd","shift"}, "Z", function()
+  undoLastAction()
+end)
+
+--------------------------------------------------
+-- CLEAR HISTORY HOTKEY (Cmd+Alt+Shift+C)
+--------------------------------------------------
+hs.hotkey.bind({"cmd","alt","shift"}, "C", function()
+  clearHistory()
+end)
+
+--------------------------------------------------
+-- SHOW HISTORY HOTKEY (Cmd+Alt+Shift+H)
+--------------------------------------------------
+hs.hotkey.bind({"cmd","alt","shift"}, "H", function()
+  if #actionHistory == 0 then
+    hs.alert.show("📋 No actions in history", 1.5)
+  else
+    local historyText = "📋 Last " .. #actionHistory .. " actions:\n"
+    for i, action in ipairs(actionHistory) do
+      historyText = historyText .. i .. ". " .. action.type .. "\n"
+      if i >= 5 then break end -- Show only first 5
+    end
+    hs.alert.show(historyText, 3)
   end
 end)
 
