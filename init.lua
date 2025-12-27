@@ -178,15 +178,18 @@ local function addCodeComment()
     hs.timer.usleep(math.random(20000, 40000)) -- Faster typing
   end
 
-  -- Quick undo using Cmd+Z (faster revert)
+  -- Precise deletion using backspace (safer than Cmd+Z)
   hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-    -- Use Cmd+Z to undo - this works with editor's undo system
-    hs.eventtap.keyStroke({ "cmd" }, "z")
-    hs.timer.usleep(50000)
-    -- Undo again to remove the newline
-    hs.eventtap.keyStroke({ "cmd" }, "z")
+    -- Delete each character of the comment
+    for i = 1, #comment do
+      hs.eventtap.keyStroke({}, "delete")
+      hs.timer.usleep(5000)
+    end
+    hs.timer.usleep(20000)
+    -- Delete the newline we added
+    hs.eventtap.keyStroke({}, "delete")
 
-    -- Add scrolling after undo (simulates reading the code)
+    -- Add scrolling after deletion (simulates reading the code)
     hs.timer.doAfter(0.2, function()
       local scrollAmount = math.random(-20, -5)
       hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
@@ -297,16 +300,11 @@ local function simulateTyping(text)
 end
 
 local function deleteTypedText(textLength)
-  -- Fast and reliable deletion using multiple methods
-  -- Method 1: Use Cmd+Z (undo) - most reliable for editors
-  hs.eventtap.keyStroke({ "cmd" }, "z")
-  hs.timer.usleep(30000)
-
-  -- Method 2: Select recent text and delete as backup
+  -- Use backspace for precise deletion (doesn't affect undo history)
   for i = 1, math.min(textLength, 100) do
     hs.eventtap.keyStroke({}, "delete")
-    if i % 10 == 0 then
-      hs.timer.usleep(10000) -- Tiny pause every 10 deletes
+    if i % 5 == 0 then
+      hs.timer.usleep(5000) -- Tiny pause every 5 deletes
     end
   end
 end
@@ -320,13 +318,11 @@ local function undoLastAction()
   local lastAction = table.remove(actionHistory, 1)
 
   if lastAction.type == "typing" then
-    -- Undo typing by sending Cmd+Z
-    hs.eventtap.keyStroke({ "cmd" }, "z")
-    hs.alert.show("⎌ Undone: " .. lastAction.type, 0.8)
+    -- For typing, we already auto-deleted it, so just show message
+    hs.alert.show("⎌ Already auto-reverted: " .. lastAction.type, 0.8)
   elseif lastAction.type == "comment" then
-    -- Undo comment addition
-    hs.eventtap.keyStroke({ "cmd" }, "z")
-    hs.alert.show("⎌ Undone: comment", 0.8)
+    -- For comment, already auto-deleted, just show message
+    hs.alert.show("⎌ Already auto-reverted: comment", 0.8)
   elseif lastAction.type == "window_resize" and lastAction.data then
     -- Restore previous window frame
     local win = hs.window.focusedWindow()
