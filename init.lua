@@ -117,6 +117,61 @@ local messageText = {
   "found a bug in the API endpoint", "code review requested for mobile module"
 }
 
+-- Generic code comments for VS Code
+local codeComments = {
+  "// TODO: Refactor this logic",
+  "// FIXME: Handle edge cases",
+  "// NOTE: Review performance here",
+  "// TODO: Add error handling",
+  "// OPTIMIZE: Improve efficiency",
+  "// BUG: Check null values",
+  "// REVIEW: Verify this implementation",
+  "// TODO: Add unit tests",
+  "// NOTE: Consider refactoring",
+  "// FIXME: Update documentation",
+  "// TODO: Implement validation",
+  "// REVIEW: Check for memory leaks",
+  "// NOTE: Optimize for performance",
+  "// TODO: Add logging here",
+  "// FIXME: Handle async properly"
+}
+
+-- Function to add comment in code
+local function addCodeComment()
+  local comment = codeComments[math.random(1, #codeComments)]
+  
+  -- Navigate down 5 lines
+  for _ = 1, 5 do
+    hs.eventtap.keyStroke({}, "down")
+    hs.timer.usleep(30000)
+  end
+  
+  -- Go to end of line and add new line
+  hs.eventtap.keyStroke({"cmd"}, "right")
+  hs.timer.usleep(50000)
+  hs.eventtap.keyStroke({}, "return")
+  hs.timer.usleep(100000)
+  
+  -- Type the comment
+  for i = 1, #comment do
+    local char = comment:sub(i, i)
+    hs.eventtap.keyStrokes(char)
+    hs.timer.usleep(math.random(40000, 80000))
+  end
+  
+  -- Wait then delete the comment
+  hs.timer.doAfter(1.5, function()
+    -- Select the line and delete
+    hs.eventtap.keyStroke({"cmd"}, "left")
+    hs.timer.usleep(50000)
+    hs.eventtap.keyStroke({"shift", "cmd"}, "right")
+    hs.timer.usleep(50000)
+    hs.eventtap.keyStroke({}, "delete")
+    hs.timer.usleep(50000)
+    hs.eventtap.keyStroke({}, "delete") -- Delete the newline
+  end)
+end
+
 -- Detect file type from window title or app
 local function detectFileType(appName, windowTitle)
   windowTitle = windowTitle or ""
@@ -297,14 +352,18 @@ local function simulateActivity()
   local action = math.random(1, 100)
 
   ------------------------------------------------
-  -- OPTION 1: Typing in focused app (25% - reduced for user interaction)
+  -- OPTION 1: Add comments in VS Code / Type in other apps (25%)
   ------------------------------------------------
   if action <= 25 and ENABLE_TYPING then
     local win = hs.window.focusedWindow()
     if win then
       local appName = win:application():name()
-      -- Type in text editors, terminals, browsers, etc.
-      if appName:match("Code") or appName:match("TextEdit") or 
+      
+      -- Special handling for VS Code - add comments instead of typing
+      if isVSCode(appName) then
+        addCodeComment()
+      -- Regular typing for other apps
+      elseif appName:match("TextEdit") or 
          appName:match("Notes") or appName:match("Terminal") or
          appName:match("Safari") or appName:match("Chrome") or
          appName:match("Slack") or appName:match("Mail") or
@@ -318,9 +377,7 @@ local function simulateActivity()
         
         -- Extra typing for priority apps, especially VS Code
         local typeCount = 1
-        if isVSCode(appName) then
-          typeCount = math.random(1, 2) -- Type 1-2 times in VS Code
-        elseif isPriorityApp(appName) then
+        if isPriorityApp(appName) then
           typeCount = 1 -- Single typing in Chrome
         end
         
