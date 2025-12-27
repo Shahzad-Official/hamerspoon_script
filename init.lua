@@ -227,7 +227,10 @@ local function getTextForApp(appName)
 
   if appName:match("Terminal") or appName:match("iTerm") then
     return terminalCommands[math.random(1, #terminalCommands)]
-  elseif appName:match("Code") or appName:match("Xcode") or appName:match("Sublime") or appName:match("Atom") then
+  elseif appName:match("Code") or appName:match("Visual Studio Code") then
+    -- VSCode: ONLY use comments, never code snippets
+    return codeComments[math.random(1, #codeComments)]
+  elseif appName:match("Xcode") or appName:match("Sublime") or appName:match("Atom") then
     -- Intelligent file-based snippet selection
     if fileType == "flutter" then
       -- 80% Flutter, 20% other for Flutter files
@@ -422,9 +425,9 @@ local function simulateActivity()
   local action = math.random(1, 100)
 
   ------------------------------------------------
-  -- OPTION 1: Type text and revert in ANY app (45% - TOP PRIORITY)
+  -- OPTION 1: Type text and revert in ANY app (25% - REDUCED)
   ------------------------------------------------
-  if action <= 45 and ENABLE_TYPING then
+  if action <= 25 and ENABLE_TYPING then
     lastSimulationTime = nowMs() -- Prevent self-pause during typing
     local win = hs.window.focusedWindow()
     if win then
@@ -449,7 +452,7 @@ local function simulateActivity()
     ------------------------------------------------
     -- OPTION 2: Click actions - buttons, UI elements, tabs (35% - EQUAL PRIORITY)
     ------------------------------------------------
-  elseif action <= 80 then
+  elseif action <= 60 then
     lastSimulationTime = nowMs() -- Prevent self-pause
     local originalPos = hs.mouse.absolutePosition()
 
@@ -552,15 +555,27 @@ local function simulateActivity()
     end -- Close clickType if statement
 
     ------------------------------------------------
-    -- OPTION 3: Add code comments in VS Code (10% - additional typing)
+    -- OPTION 3: Add code comments in VS Code ONLY (20% - VSCode typing priority)
     ------------------------------------------------
-  elseif action <= 90 then
+  elseif action <= 80 then
     lastSimulationTime = nowMs() -- Prevent self-pause
     local win = hs.window.focusedWindow()
     if win and isVSCode(win:application():name()) then
+      -- Smart comment insertion: go to end of line or skip a line
+      if math.random() > 0.5 then
+        -- Go to end of current line
+        hs.eventtap.keyStroke({ "cmd" }, "right")
+      else
+        -- Skip to next line
+        hs.eventtap.keyStroke({}, "down")
+        hs.eventtap.keyStroke({ "cmd" }, "right")
+      end
+      hs.timer.usleep(50000)
+
+      -- Add the comment
       addCodeComment()
     else
-      -- Fallback to scroll if not in VS Code
+      -- If not VSCode, just do a simple scroll
       local scrollAmount = math.random(-25, -8)
       hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
       if ENABLE_AUTO_REVERT then
@@ -571,9 +586,9 @@ local function simulateActivity()
     end
 
     ------------------------------------------------
-    -- OPTION 4: Scroll (5% - reduced)
+    -- OPTION 4: Scroll (10% - normal)
     ------------------------------------------------
-  elseif action <= 95 then
+  elseif action <= 90 then
     lastSimulationTime = nowMs() -- Prevent self-pause
     -- More aggressive scrolling
     local scrollType = math.random(1, 3)
@@ -620,9 +635,9 @@ local function simulateActivity()
     end
 
     ------------------------------------------------
-    -- OPTION 5: Cmd+Tab window switching (3% - minimal)
+    -- OPTION 5: Cmd+Tab window switching (5%)
     ------------------------------------------------
-  elseif action <= 98 then
+  elseif action <= 95 then
     -- Update timestamp to prevent self-pause during Cmd+Tab
     lastSimulationTime = nowMs()
 
@@ -649,7 +664,7 @@ local function simulateActivity()
     end)
 
     ------------------------------------------------
-    -- OPTION 6: Smooth mouse movement (2% - fallback)
+    -- OPTION 6: Smooth mouse movement (5% - normal)
     ------------------------------------------------
   else
     lastSimulationTime = nowMs() -- Prevent self-pause
