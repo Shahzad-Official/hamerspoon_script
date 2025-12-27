@@ -43,23 +43,42 @@ open -a Hammerspoon
 Clone this repository directly into your Hammerspoon configuration directory:
 
 ```bash
-# Backup existing config if you have one (if it exists)
-[ -d ~/.hammerspoon ] && mv ~/.hammerspoon ~/.hammerspoon.backup
+# Backup existing config with timestamp (if it exists)
+if [ -d ~/.hammerspoon ]; then
+  mv ~/.hammerspoon ~/.hammerspoon.backup.$(date +%Y%m%d_%H%M%S)
+fi
 
 # Clone this repository
 git clone https://github.com/Shahzad-Official/hamerspoon_script.git ~/.hammerspoon
 
-# Reload Hammerspoon configuration
-# Method 1: Via command line
-open -g "hammerspoon://reload"
+# Launch Hammerspoon (if not already running)
+open -a Hammerspoon 2>/dev/null || echo "Hammerspoon is already running"
 
-# Method 2: Click the Hammerspoon icon in menu bar → Reload Config
-# Method 3: If Hammerspoon is not running, launch it from Applications
+# Reload Hammerspoon configuration
+open -g "hammerspoon://reload"
 ```
 
-### Option 2: Copy File
+**Note**: If you already have a `.hammerspoon.backup` directory, the backup will be timestamped to avoid conflicts.
 
-If you already have a Hammerspoon configuration:
+### Option 2: Fresh Install (if Option 1 fails)
+
+If the directory already exists and you want a clean install:
+
+```bash
+# Remove existing directory (⚠️ WARNING: This deletes your current config)
+rm -rf ~/.hammerspoon ~/.hammerspoon.backup*
+
+# Clone this repository
+git clone https://github.com/Shahzad-Official/hamerspoon_script.git ~/.hammerspoon
+
+# Launch and reload Hammerspoon
+open -a Hammerspoon
+open -g "hammerspoon://reload"
+```
+
+### Option 3: Copy File
+
+If you already have a Hammerspoon configuration you want to keep:
 
 ```bash
 # Clone to a temporary location
@@ -72,7 +91,7 @@ cp /tmp/hamerspoon_script/init.lua ~/.hammerspoon/
 open -g "hammerspoon://reload"
 ```
 
-### Option 3: Manual Download
+### Option 4: Manual Download
 
 1. Download [init.lua](init.lua) from this repository
 2. Place it in `~/.hammerspoon/`
