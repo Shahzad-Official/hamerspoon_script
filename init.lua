@@ -8,11 +8,11 @@ math.randomseed(os.time())
 --------------------------------------------------
 -- CONFIG - MAXIMUM FREQUENCY (80-90% Activity)
 --------------------------------------------------
-local MIN_INTERVAL = 0.3 -- ULTRA fast for 80-90% activity
-local MAX_INTERVAL = 0.7 -- ULTRA fast for 80-90% activity
-local AUTO_REVERT_DELAY = 0.4 -- Quick revert
-local IDLE_SECONDS = 3 -- Pause 3s after real user input, then auto-resume
-local SELF_EVENT_GRACE_MS = 2500
+local MIN_INTERVAL = 0.2 -- ULTRA fast for 80-90% activity
+local MAX_INTERVAL = 0.5 -- ULTRA fast for 80-90% activity
+local AUTO_REVERT_DELAY = 0.3 -- Quick revert
+local IDLE_SECONDS = 2 -- Pause 2s after real user input, then auto-resume
+local SELF_EVENT_GRACE_MS = 1800 -- Shorter grace to be more responsive
 
 --------------------------------------------------
 -- STATE
@@ -245,6 +245,23 @@ local function simulateActivity()
   
   -- ALWAYS add smart mouse movement in active app
   smartMouseMove()
+  
+  -- Extra aggressive activity: sometimes do double action
+  if math.random() > 0.7 then
+    hs.timer.doAfter(0.15, function()
+      lastSimulationTime = nowMs()
+      -- Quick scroll or mouse move
+      if math.random() > 0.5 then
+        local amt = math.random(-15, -5)
+        hs.eventtap.scrollWheel({ 0, amt }, {}, "pixel")
+        hs.timer.doAfter(0.3, function()
+          hs.eventtap.scrollWheel({ 0, -amt }, {}, "pixel")
+        end)
+      else
+        smartMouseMove()
+      end
+    end)
+  end
 end
 
 --------------------------------------------------
@@ -296,17 +313,24 @@ local function onUserInput(event)
       activityTimer:stop()
       activityTimer = nil
     end
-    hs.alert.show("⏸ PAUSED (User Active)", 0.8)
-    print("⏸ Paused - user is physically active")
+    hs.alert.show("⏸ PAUSED", 0.6)
+    print("⏸ Paused - user active")
   end
 
   -- Auto-resume timer: restart every time user moves
-  if resumeTimer then resumeTimer:stop() end
+  if resumeTimer then 
+    resumeTimer:stop()
+    resumeTimer = nil
+  end
+  
   resumeTimer = hs.timer.doAfter(IDLE_SECONDS, function()
     print("▶ Auto-resuming after " .. IDLE_SECONDS .. "s idle")
-    isPausedByUser = false
-    startAutomation()
-    hs.alert.show("▶ AUTO-RESUMED", 1)
+    if isPausedByUser then
+      isPausedByUser = false
+      scheduleNext() -- Start scheduling again
+      hs.alert.show("▶ RESUMED", 1.5)
+      print("✓ Activity resumed successfully")
+    end
   end)
   
   return false
@@ -349,7 +373,8 @@ end)
 --------------------------------------------------
 -- AUTO START
 --------------------------------------------------
-hs.alert.show("🚀 ULTRA ACTIVITY MODE LOADED", 2)
+hs.alert.show("🚀 ULTRA MODE ACTIVE\nActions every 0.2-0.5s\nAuto-resume in 2s", 3)
 print("🚀 Hammerspoon Ultra Activity Mode - 80-90% target")
-print("⏸ Will pause on physical interaction, auto-resume after 3s idle")
+print("⏸ Will pause on physical interaction, auto-resume after 2s idle")
+print("✓ Hotkeys: Cmd+Alt+Ctrl+S (toggle), Cmd+Alt+Ctrl+T (manual trigger)")
 startAutomation()
