@@ -10,7 +10,7 @@ math.randomseed(os.time())
 -- CONFIG
 --------------------------------------------------
 local IDLE_SECONDS = 5
-local SELF_EVENT_GRACE_MS = 300
+local SELF_EVENT_GRACE_MS = 1500 -- Increased to 1.5s to better distinguish self events
 local ENABLE_GLOBAL_UI = true -- Mission Control / Spotlight
 local ENABLE_TYPING = true -- Keyboard typing in apps
 local MIN_INTERVAL = 1 -- Increased frequency for 70-90% activity
@@ -38,20 +38,34 @@ end
 --------------------------------------------------
 -- TYPING HELPERS
 --------------------------------------------------
--- Terminal commands for NestJS & Flutter developer
+-- Terminal commands for NestJS & Flutter developer (Flutter-focused)
 local terminalCommands = {
-  "npm run start:dev", "npm install", "npm run build", "npm run test",
   "flutter run", "flutter doctor", "flutter pub get", "flutter clean",
+  "flutter build apk", "flutter analyze", "flutter create", "flutter test",
   "git status", "git add .", "git commit -m \"", "git push origin",
-  "docker-compose up -d", "docker ps", "yarn install", "yarn start",
-  "nest generate module", "nest generate service", "nest g controller",
-  "flutter create", "flutter build apk", "flutter analyze",
-  "npm run lint", "npm run format", "yarn test:watch",
-  "cd backend && npm install", "cd mobile && flutter pub get",
-  "prisma migrate dev", "prisma studio", "typeorm migration:run"
+  "npm run start:dev", "npm install", "npm run build",
+  "docker-compose up -d", "docker ps", "yarn install",
+  "cd mobile && flutter pub get", "cd backend && npm install",
+  "flutter build ios", "flutter devices", "flutter upgrade"
 }
 
--- NestJS code snippets
+-- Flutter/Dart code snippets (PRIMARY - most common)
+local flutterSnippets = {
+  "class MyWidget extends StatelessWidget {", "Widget build(BuildContext context) {",
+  "return Scaffold(", "setState(() {", "final controller = TextEditingController();",
+  "Navigator.push(context, MaterialPageRoute(", "import 'package:flutter/material.dart';",
+  "Future<void> fetchData() async {", "try { await http.get(",
+  "child: Column(children: [", "onPressed: () {", "const SizedBox(height: ",
+  "Provider.of<", "BlocBuilder<", "GetX<", "StreamBuilder<",
+  "final response = await dio.get(", "ListView.builder(itemBuilder: (context, index) =>",
+  "Container(padding: EdgeInsets.all(", "Text('", "ElevatedButton(",
+  "TextFormField(decoration: InputDecoration(",
+  "final _formKey = GlobalKey<FormState>();", "context.read<",
+  "Navigator.pop(context);", "showDialog(context: context, builder: (context) =>",
+  "FutureBuilder<", "Image.asset('", "Icon(Icons."
+}
+
+-- NestJS code snippets (SECONDARY)
 local nestjsSnippets = {
   "@Controller('", "@Get()", "@Post()", "@Injectable()",
   "async create(@Body() dto: ", "constructor(private readonly ",
@@ -63,68 +77,100 @@ local nestjsSnippets = {
   "implements OnModuleInit {", "private readonly logger = new Logger("
 }
 
--- Flutter/Dart code snippets
-local flutterSnippets = {
-  "class MyWidget extends StatelessWidget {", "Widget build(BuildContext context) {",
-  "return Scaffold(", "setState(() {", "final controller = TextEditingController();",
-  "Navigator.push(context, MaterialPageRoute(", "import 'package:flutter/material.dart';",
-  "Future<void> fetchData() async {", "try { await http.get(",
-  "child: Column(children: [", "onPressed: () {", "const SizedBox(height: ",
-  "Provider.of<", "BlocBuilder<", "GetX<",
-  "final response = await dio.get(", "StreamBuilder<",
-  "ListView.builder(itemBuilder: (context, index) =>"
-}
-
 -- Mixed code snippets for full-stack dev
 local codeSnippets = {
   "async function fetchData() {", "const response = await axios.get(",
   "try { const result = ", "} catch (error) { console.error(",
   "interface UserDto {", "type ResponseType = {",
-  "import { Injectable } from '@nestjs/common';", "export default function",
+  "export default function", "import { useState } from 'react';",
   "const [data, setData] = useState(", "useEffect(() => {",
   "return { statusCode: 200,", "await repository.findOne(",
 }
 
--- Browser search queries for developers
+-- Browser search queries for developers (Flutter-focused)
 local browserSearches = {
-  "nestjs documentation", "flutter widgets catalog", "dart async programming",
-  "nestjs typeorm relations", "flutter state management", "stackoverflow nestjs",
-  "flutter riverpod tutorial", "nestjs jwt authentication", "dart null safety",
-  "flutter bloc pattern", "nestjs middleware", "firebase flutter integration",
-  "nestjs swagger setup", "flutter responsive design", "docker nestjs production"
+  "flutter widgets catalog", "flutter state management", "dart async programming",
+  "flutter bloc pattern", "flutter riverpod tutorial", "dart null safety",
+  "flutter responsive design", "firebase flutter integration", "flutter animations",
+  "stackoverflow flutter", "flutter pub packages", "flutter dio http",
+  "nestjs documentation", "nestjs typeorm relations", "nestjs jwt authentication",
+  "docker nestjs production", "nestjs swagger setup", "nestjs middleware"
 }
 
--- Regular text for notes/documents
+-- Regular text for notes/documents (Flutter-focused)
 local documentText = {
-  "API endpoint documentation", "database schema design notes",
-  "mobile app feature requirements", "backend service architecture",
+  "mobile app feature requirements", "flutter widget tree optimization",
+  "UI/UX design implementation notes", "state management refactoring",
+  "API integration documentation", "app performance improvements",
   "sprint planning tasks", "code review comments and feedback",
-  "deployment checklist items", "bug fixes and improvements needed",
-  "user authentication flow", "data model relationships overview"
+  "user authentication flow", "backend service architecture",
+  "deployment checklist items", "bug fixes and improvements needed"
 }
 
--- Communication text for Slack/Mail
+-- Communication text for Slack/Mail (Flutter-focused)
 local messageText = {
-  "pushed the latest changes", "merged the PR, please review",
-  "deployment completed successfully", "found a bug in the API endpoint",
-  "updated the mobile UI components", "backend service is ready for testing",
-  "need help with flutter widget", "code review requested for nestjs module",
-  "completed the feature implementation", "database migration ran successfully"
+  "pushed the latest Flutter changes", "updated the mobile UI components",
+  "completed the feature implementation", "flutter build completed successfully",
+  "need help with flutter widget", "fixed the state management issue",
+  "merged the PR, please review", "backend service is ready for testing",
+  "deployment completed successfully", "database migration ran successfully",
+  "found a bug in the API endpoint", "code review requested for mobile module"
 }
 
--- Generate text based on app type
+-- Detect file type from window title or app
+local function detectFileType(appName, windowTitle)
+  windowTitle = windowTitle or ""
+  
+  -- Check window title for file extensions and keywords
+  if windowTitle:match("%.dart") or windowTitle:match("flutter") or 
+     windowTitle:match("%.yaml") and (windowTitle:match("pubspec") or appName:match("Code")) then
+    return "flutter"
+  elseif windowTitle:match("%.ts") or windowTitle:match("%.js") or 
+         windowTitle:match("nest") or windowTitle:match("%.controller") or
+         windowTitle:match("%.service") or windowTitle:match("%.module") then
+    return "nestjs"
+  elseif appName:match("Code") or appName:match("Visual Studio Code") then
+    -- Default to Flutter for VS Code if uncertain (user does mostly Flutter)
+    return "flutter"
+  end
+  
+  return "general"
+end
+
+-- Generate text based on app type and file context
 local function getTextForApp(appName)
+  local win = hs.window.focusedWindow()
+  local windowTitle = win and win:title() or ""
+  local fileType = detectFileType(appName, windowTitle)
+  
   if appName:match("Terminal") or appName:match("iTerm") then
     return terminalCommands[math.random(1, #terminalCommands)]
   elseif appName:match("Code") or appName:match("Xcode") or appName:match("Sublime") or appName:match("Atom") then
-    -- Mix NestJS, Flutter, and general code snippets
-    local snippetType = math.random(1, 3)
-    if snippetType == 1 then
-      return nestjsSnippets[math.random(1, #nestjsSnippets)]
-    elseif snippetType == 2 then
-      return flutterSnippets[math.random(1, #flutterSnippets)]
+    -- Intelligent file-based snippet selection
+    if fileType == "flutter" then
+      -- 80% Flutter, 20% other for Flutter files
+      if math.random() > 0.2 then
+        return flutterSnippets[math.random(1, #flutterSnippets)]
+      else
+        return codeSnippets[math.random(1, #codeSnippets)]
+      end
+    elseif fileType == "nestjs" then
+      -- 70% NestJS, 30% other for NestJS files
+      if math.random() > 0.3 then
+        return nestjsSnippets[math.random(1, #nestjsSnippets)]
+      else
+        return codeSnippets[math.random(1, #codeSnippets)]
+      end
     else
-      return codeSnippets[math.random(1, #codeSnippets)]
+      -- Default: Favor Flutter (user does mostly Flutter) 60% Flutter, 20% NestJS, 20% general
+      local rand = math.random()
+      if rand > 0.4 then
+        return flutterSnippets[math.random(1, #flutterSnippets)]
+      elseif rand > 0.2 then
+        return nestjsSnippets[math.random(1, #nestjsSnippets)]
+      else
+        return codeSnippets[math.random(1, #codeSnippets)]
+      end
     end
   elseif appName:match("Safari") or appName:match("Chrome") or appName:match("Firefox") then
     return browserSearches[math.random(1, #browserSearches)]
@@ -133,14 +179,14 @@ local function getTextForApp(appName)
   elseif appName:match("Notes") or appName:match("TextEdit") or appName:match("Pages") then
     return documentText[math.random(1, #documentText)]
   else
-    -- Default to code snippets for developer
-    local snippetType = math.random(1, 3)
-    if snippetType == 1 then
-      return nestjsSnippets[math.random(1, #nestjsSnippets)]
-    elseif snippetType == 2 then
+    -- Default: Favor Flutter since user does mostly Flutter work
+    local rand = math.random()
+    if rand > 0.5 then
       return flutterSnippets[math.random(1, #flutterSnippets)]
-    else
+    elseif rand > 0.3 then
       return codeSnippets[math.random(1, #codeSnippets)]
+    else
+      return nestjsSnippets[math.random(1, #nestjsSnippets)]
     end
   end
 end
@@ -166,12 +212,20 @@ local function simulateTyping(text)
 end
 
 local function deleteTypedText(textLength)
-  -- Select all typed text and delete with proper timing
-  hs.timer.doAfter(0.05, function()
-    for i = 1, textLength do
+  -- More efficient and reliable deletion
+  -- Use Cmd+A to select all, then delete, then type backspaces for remaining
+  hs.timer.doAfter(0.1, function()
+    -- Method 1: Select and delete (fast)
+    hs.eventtap.keyStroke({"cmd"}, "a")
+    hs.timer.usleep(50000)
+    hs.eventtap.keyStroke({}, "delete")
+    hs.timer.usleep(100000)
+    
+    -- Method 2: Backspace remaining characters (thorough)
+    for i = 1, math.min(textLength, 50) do -- Limit to 50 to avoid infinite loops
       hs.eventtap.keyStroke({}, "delete")
-      if i < textLength then
-        hs.timer.usleep(math.random(25000, 40000)) -- Variable delete speed
+      if i % 5 == 0 then
+        hs.timer.usleep(20000) -- Small pause every 5 deletes
       end
     end
   end)
@@ -222,6 +276,9 @@ end
 -- ACTIVITY FUNCTION (REAL INPUT)
 --------------------------------------------------
 local function simulateActivity()
+  -- Skip if user is active
+  if isPausedByUser then return end
+  
   lastSimulationTime = nowMs()
 
   -- Focus priority apps frequently (75% chance, heavily favoring VS Code)
@@ -487,18 +544,31 @@ end
 --------------------------------------------------
 -- USER INPUT DETECTION
 --------------------------------------------------
-local function onUserInput()
+local function onUserInput(event)
   local now = nowMs()
-  if isPausedByUser or (now - lastSimulationTime < SELF_EVENT_GRACE_MS) then return end
+  local timeSinceLastSim = now - lastSimulationTime
+  
+  -- Only check grace period, don't block if already paused
+  if timeSinceLastSim < SELF_EVENT_GRACE_MS then 
+    return false -- Likely a simulated event, ignore
+  end
+  
+  -- Real user input detected
+  if not isPausedByUser then
+    isPausedByUser = true
+    stopAutomation()
+    hs.alert.show("⏸ Paused - User active", 0.5)
+  end
 
-  isPausedByUser = true
-  stopAutomation()
-
+  -- Reset the resume timer
   if resumeTimer then resumeTimer:stop() end
   resumeTimer = hs.timer.doAfter(IDLE_SECONDS, function()
     isPausedByUser = false
     startAutomation()
+    hs.alert.show("▶ Resumed automation", 0.5)
   end)
+  
+  return false
 end
 
 --------------------------------------------------
@@ -510,11 +580,12 @@ local userEventTap = hs.eventtap.new(
     hs.eventtap.event.types.leftMouseDown,
     hs.eventtap.event.types.rightMouseDown,
     hs.eventtap.event.types.scrollWheel,
-    hs.eventtap.event.types.keyDown
+    hs.eventtap.event.types.keyDown,
+    hs.eventtap.event.types.flagsChanged -- Detect modifier keys
   },
-  function()
-    onUserInput()
-    return false
+  function(event)
+    onUserInput(event)
+    return false -- Don't block the event
   end
 )
 
