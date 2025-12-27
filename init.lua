@@ -15,6 +15,10 @@ local ENABLE_GLOBAL_UI = true -- Mission Control / Spotlight
 local ENABLE_TYPING = true -- Keyboard typing in apps
 local MIN_INTERVAL = 1 -- Increased frequency for 70-90% activity
 local MAX_INTERVAL = 3 -- Increased frequency for 70-90% activity
+local PRIORITY_APPS = {"Code", "Visual Studio Code"} -- VS Code is top priority
+local SECONDARY_APPS = {"Chrome", "Google Chrome"} -- Chrome secondary
+local VSCODE_FOCUS_CHANCE = 80 -- 80% chance to focus VS Code specifically
+local PRIORITY_APP_FOCUS_CHANCE = 75 -- Overall chance to focus priority apps
 
 --------------------------------------------------
 -- STATE
@@ -162,11 +166,56 @@ local function simulateTyping(text)
 end
 
 local function deleteTypedText(textLength)
-  -- Select all typed text and delete
-  for _ = 1, textLength do
-    hs.eventtap.keyStroke({}, "delete")
-    hs.timer.usleep(math.random(25000, 40000)) -- Variable delete speed
+  -- Select all typed text and delete with proper timing
+  hs.timer.doAfter(0.05, function()
+    for i = 1, textLength do
+      hs.eventtap.keyStroke({}, "delete")
+      if i < textLength then
+        hs.timer.usleep(math.random(25000, 40000)) -- Variable delete speed
+      end
+    end
+  end)
+end
+
+--------------------------------------------------
+-- PRIORITY APP HELPERS
+--------------------------------------------------
+local function isPriorityApp(appName)
+  for _, priority in ipairs(PRIORITY_APPS) do
+    if appName:match(priority) then
+      return true
+    end
   end
+  for _, secondary in ipairs(SECONDARY_APPS) do
+    if appName:match(secondary) then
+      return true
+    end
+  end
+  return false
+end
+
+local function isVSCode(appName)
+  return appName:match("Code") or appName:match("Visual Studio Code")
+end
+
+local function focusPriorityApp()
+  -- Try to find VS Code and Chrome
+  local vscode = hs.application.find("Code") or hs.application.find("Visual Studio Code")
+  local chrome = hs.application.find("Chrome") or hs.application.find("Google Chrome")
+  
+  -- 80% chance to focus VS Code if it exists, otherwise Chrome
+  if vscode and math.random(1, 100) <= VSCODE_FOCUS_CHANCE then
+    vscode:activate()
+    return true
+  elseif chrome then
+    chrome:activate()
+    return true
+  elseif vscode then
+    -- Fallback to VS Code if Chrome wasn't chosen
+    vscode:activate()
+    return true
+  end
+  return false
 end
 
 --------------------------------------------------
@@ -174,6 +223,12 @@ end
 --------------------------------------------------
 local function simulateActivity()
   lastSimulationTime = nowMs()
+
+  -- Focus priority apps frequently (75% chance, heavily favoring VS Code)
+  if math.random(1, 100) <= PRIORITY_APP_FOCUS_CHANCE then
+    focusPriorityApp()
+    hs.timer.usleep(500000) -- Wait 500ms for app to focus
+  end
 
   -- Always: tiny mouse movement (increased movement for more activity)
   local pos = hs.mouse.absolutePosition()
@@ -185,9 +240,9 @@ local function simulateActivity()
   local action = math.random(1, 100)
 
   ------------------------------------------------
-  -- OPTION 1: Typing in focused app (35% - increased)
+  -- OPTION 1: Typing in focused app (45% - increased for VS Code)
   ------------------------------------------------
-  if action <= 35 and ENABLE_TYPING then
+  if action <= 45 and ENABLE_TYPING then
     local win = hs.window.focusedWindow()
     if win then
       local appName = win:application():name()
@@ -204,27 +259,53 @@ local function simulateActivity()
         local text = getTextForApp(appName)
         local textLength = #text
         
+        -- Extra typing for priority apps, especially VS Code
+        local typeCount = 1
+        if isVSCode(appName) then
+          typeCount = math.random(2, 3) -- Type 2-3 times in VS Code for max activity
+        elseif isPriorityApp(appName) then
+          typeCount = math.random(1, 2) -- Sometimes type twice in Chrome
+        end
+        
         hs.timer.doAfter(0.1, function()
-          simulateTyping(text)
-          -- Always delete the typed text after a short pause
-          hs.timer.doAfter(math.random(0.8, 1.5), function()
-            deleteTypedText(textLength)
-            -- Sometimes add extra actions after typing
-            if math.random() > 0.7 then
-              hs.timer.doAfter(0.2, function()
-                -- Scroll after typing (reading what was typed)
-                hs.eventtap.scrollWheel({ 0, math.random(-10,-3) }, {}, "pixel")
+          -- Type multiple times with pauses
+          local currentIteration = 0
+          local function typeIteration()
+            currentIteration = currentIteration + 1
+            simulateTyping(text)
+            
+            if currentIteration < typeCount then
+              -- Delete and type again
+              hs.timer.doAfter(0.5, function()
+                deleteTypedText(textLength)
+                hs.timer.doAfter(0.3, function()
+                  typeIteration() -- Type next iteration
+                end)
+              end)
+            else
+              -- Final deletion after last typing
+              hs.timer.doAfter(math.random(1.0, 1.8), function()
+                deleteTypedText(textLength)
+                -- Sometimes add extra actions after typing
+                if math.random() > 0.7 then
+                  hs.timer.doAfter(0.2, function()
+                    -- Scroll after typing (reading what was typed)
+                    hs.eventtap.scrollWheel({ 0, math.random(-10,-3) }, {}, "pixel")
+                  end)
+                end
               end)
             end
-          end)
+          end
+          
+          typeIteration() -- Start typing
         end)
       end
     end
 
   ------------------------------------------------
-  -- OPTION 2: Scroll (30% - increased)
+  -- OPTION 2: Scroll (25% - adjusted for more typing)
   ------------------------------------------------
-  elseif action <= 65 then
+  elseif action <= 70 then
     -- More aggressive scrolling
     local scrollType = math.random(1, 3)
     if scrollType == 1 then
@@ -243,20 +324,26 @@ local function simulateActivity()
     end
 
   ------------------------------------------------
-  -- OPTION 3: Cmd+Tab + scroll (15%)
+  -- OPTION 3: Cmd+Tab + scroll (10%)
   ------------------------------------------------
   elseif action <= 80 then
-    hs.eventtap.event.newKeyEvent(hs.keycodes.map.cmd, true):post()
+    -- Heavily favor switching to VS Code
+    if math.random() > 0.3 then
+      focusPriorityApp() -- 70% chance to go straight to VS Code/Chrome
+      hs.timer.usleep(300000)
+    else
+      hs.eventtap.event.newKeyEvent(hs.keycodes.map.cmd, true):post()
 
-    for _ = 1, math.random(1,4) do -- More app switches
-      hs.timer.usleep(100000)
-      hs.eventtap.event.newKeyEvent(hs.keycodes.map.tab, true):post()
-      hs.eventtap.event.newKeyEvent(hs.keycodes.map.tab, false):post()
+      for _ = 1, math.random(1,3) do
+        hs.timer.usleep(100000)
+        hs.eventtap.event.newKeyEvent(hs.keycodes.map.tab, true):post()
+        hs.eventtap.event.newKeyEvent(hs.keycodes.map.tab, false):post()
+      end
+
+      hs.timer.doAfter(0.15, function()
+        hs.eventtap.event.newKeyEvent(hs.keycodes.map.cmd, false):post()
+      end)
     end
-
-    hs.timer.doAfter(0.15, function()
-      hs.eventtap.event.newKeyEvent(hs.keycodes.map.cmd, false):post()
-    end)
 
     hs.timer.doAfter(0.3, function()
       hs.eventtap.scrollWheel({ 0, math.random(-20,-8) }, {}, "pixel")
