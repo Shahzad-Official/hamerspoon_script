@@ -10,18 +10,23 @@ math.randomseed(os.time())
 -- CONFIG
 --------------------------------------------------
 local IDLE_SECONDS = 5
-local SELF_EVENT_GRACE_MS = 3000                       -- Increased to 3s to better prevent self-pause
+local SELF_EVENT_GRACE_MS = 500                        -- Short grace period to avoid blocking user
 local ENABLE_GLOBAL_UI = true                          -- Mission Control / Spotlight
 local ENABLE_TYPING = true                             -- Keyboard typing in apps
-local MIN_INTERVAL = 2                                 -- Balanced for natural activity
-local MAX_INTERVAL = 5                                 -- Balanced for natural activity
 local AUTO_REVERT_DELAY = 0.8                          -- Fast revert to avoid conflicts (0.8s)
 local ENABLE_AUTO_REVERT = true                        -- Automatically revert actions for humanized behavior
 local PRIORITY_APPS = { "Code", "Visual Studio Code" } -- VS Code is top priority
 local SECONDARY_APPS = { "Chrome", "Google Chrome" }   -- Chrome secondary
-local VSCODE_FOCUS_CHANCE = 85                         -- 85% chance to focus VS Code specifically
-local PRIORITY_APP_FOCUS_CHANCE = 75                   -- Overall chance to focus priority apps
-local SPOTLIGHT_MIN_INTERVAL = 300                     -- Minimum 5 minutes between Spotlight activations
+
+-- SEQUENTIAL FLOW CONFIG
+local STEP_DELAYS = {
+  COMMENT_DURATION = 5,                -- Step 1: Type comments for 5 seconds
+  WAIT_BEFORE_CURSOR = 5,              -- Step 2: Wait 5 seconds before cursor movement
+  CURSOR_DURATION = math.random(5, 7), -- Step 2: Move cursor/resize for 5-7 seconds
+  SEARCH_DELAY = 2,                    -- Step 3: Delay before search
+  TAB_CHANGE_DELAY = 2,                -- Step 4: Delay before tab change
+  FINAL_CURSOR_DELAY = 2,              -- Step 5: Final cursor movement delay
+}
 
 --------------------------------------------------
 -- STATE
@@ -29,10 +34,15 @@ local SPOTLIGHT_MIN_INTERVAL = 300                     -- Minimum 5 minutes betw
 local activityTimer = nil
 local resumeTimer = nil
 local isPausedByUser = false
-local lastSpotlightTime = 0 -- Track last Spotlight activation
 local lastSimulationTime = 0
-local actionHistory = {}    -- Store history of actions for undo
-local MAX_HISTORY = 10      -- Keep last 10 actions
+local actionHistory = {} -- Store history of actions for undo
+local MAX_HISTORY = 10   -- Keep last 10 actions
+
+-- Sequential flow state
+local currentStep = 1
+local stepStartTime = 0
+local isExecutingStep = false
+local activeTimers = {} -- Track all active timers
 
 --------------------------------------------------
 -- TIME (MONOTONIC)
@@ -44,16 +54,7 @@ end
 --------------------------------------------------
 -- TYPING HELPERS
 --------------------------------------------------
--- Terminal commands for NestJS & Flutter developer (Flutter-focused)
-local terminalCommands = {
-  "flutter run", "flutter doctor", "flutter pub get", "flutter clean",
-  "flutter build apk", "flutter analyze", "flutter create", "flutter test",
-  "git status", "git add .", "git commit -m \"", "git push origin",
-  "npm run start:dev", "npm install", "npm run build",
-  "docker-compose up -d", "docker ps", "yarn install",
-  "cd mobile && flutter pub get", "cd backend && npm install",
-  "flutter build ios", "flutter devices", "flutter upgrade"
-}
+
 
 -- Flutter/Dart code snippets (PRIMARY - most common)
 local flutterSnippets = {
@@ -103,25 +104,7 @@ local browserSearches = {
   "docker nestjs production", "nestjs swagger setup", "nestjs middleware"
 }
 
--- Regular text for notes/documents (Flutter-focused)
-local documentText = {
-  "mobile app feature requirements", "flutter widget tree optimization",
-  "UI/UX design implementation notes", "state management refactoring",
-  "API integration documentation", "app performance improvements",
-  "sprint planning tasks", "code review comments and feedback",
-  "user authentication flow", "backend service architecture",
-  "deployment checklist items", "bug fixes and improvements needed"
-}
 
--- Communication text for Slack/Mail (Flutter-focused)
-local messageText = {
-  "pushed the latest Flutter changes", "updated the mobile UI components",
-  "completed the feature implementation", "flutter build completed successfully",
-  "need help with flutter widget", "fixed the state management issue",
-  "merged the PR, please review", "backend service is ready for testing",
-  "deployment completed successfully", "database migration ran successfully",
-  "found a bug in the API endpoint", "code review requested for mobile module"
-}
 
 -- Generic code comments for VS Code
 local codeComments = {
@@ -158,157 +141,6 @@ local function addToHistory(actionType, data)
   end
 end
 
--- Function to add comment in code
-local function addCodeComment()
-  local comment = codeComments[math.random(1, #codeComments)]
-
-  -- Track this action for undo
-  addToHistory("comment", { text = comment })
-
-  -- Go to end of current line and add new line
-  hs.eventtap.keyStroke({ "cmd" }, "right")
-  hs.timer.usleep(30000) -- Faster
-  hs.eventtap.keyStroke({}, "return")
-  hs.timer.usleep(50000) -- Faster
-
-  -- Type the comment faster (counts as more keystrokes)
-  for i = 1, #comment do
-    local char = comment:sub(i, i)
-    hs.eventtap.keyStrokes(char)
-    hs.timer.usleep(math.random(20000, 40000)) -- Faster typing
-  end
-
-  -- Precise deletion using backspace (safer than Cmd+Z)
-  hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-    -- Delete each character of the comment
-    for i = 1, #comment do
-      hs.eventtap.keyStroke({}, "delete")
-      hs.timer.usleep(5000)
-    end
-    hs.timer.usleep(20000)
-    -- Delete the newline we added
-    hs.eventtap.keyStroke({}, "delete")
-
-    -- Add scrolling after deletion (simulates reading the code)
-    hs.timer.doAfter(0.2, function()
-      local scrollAmount = math.random(-20, -5)
-      hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
-
-      -- Always scroll back for clean revert
-      hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-        hs.eventtap.scrollWheel({ 0, -scrollAmount }, {}, "pixel")
-      end)
-    end)
-  end)
-end
-
--- Detect file type from window title or app
-local function detectFileType(appName, windowTitle)
-  windowTitle = windowTitle or ""
-
-  -- Check window title for file extensions and keywords
-  if windowTitle:match("%.dart") or windowTitle:match("flutter") or
-      windowTitle:match("%.yaml") and (windowTitle:match("pubspec") or appName:match("Code")) then
-    return "flutter"
-  elseif windowTitle:match("%.ts") or windowTitle:match("%.js") or
-      windowTitle:match("nest") or windowTitle:match("%.controller") or
-      windowTitle:match("%.service") or windowTitle:match("%.module") then
-    return "nestjs"
-  elseif appName:match("Code") or appName:match("Visual Studio Code") then
-    -- Default to Flutter for VS Code if uncertain (user does mostly Flutter)
-    return "flutter"
-  end
-
-  return "general"
-end
-
--- Generate text based on app type and file context
-local function getTextForApp(appName)
-  local win = hs.window.focusedWindow()
-  local windowTitle = win and win:title() or ""
-  local fileType = detectFileType(appName, windowTitle)
-
-  if appName:match("Terminal") or appName:match("iTerm") then
-    return terminalCommands[math.random(1, #terminalCommands)]
-  elseif appName:match("Code") or appName:match("Visual Studio Code") then
-    -- VSCode: ONLY use comments, never code snippets
-    return codeComments[math.random(1, #codeComments)]
-  elseif appName:match("Xcode") or appName:match("Sublime") or appName:match("Atom") then
-    -- Intelligent file-based snippet selection
-    if fileType == "flutter" then
-      -- 80% Flutter, 20% other for Flutter files
-      if math.random() > 0.2 then
-        return flutterSnippets[math.random(1, #flutterSnippets)]
-      else
-        return codeSnippets[math.random(1, #codeSnippets)]
-      end
-    elseif fileType == "nestjs" then
-      -- 70% NestJS, 30% other for NestJS files
-      if math.random() > 0.3 then
-        return nestjsSnippets[math.random(1, #nestjsSnippets)]
-      else
-        return codeSnippets[math.random(1, #codeSnippets)]
-      end
-    else
-      -- Default: Favor Flutter (user does mostly Flutter) 60% Flutter, 20% NestJS, 20% general
-      local rand = math.random()
-      if rand > 0.4 then
-        return flutterSnippets[math.random(1, #flutterSnippets)]
-      elseif rand > 0.2 then
-        return nestjsSnippets[math.random(1, #nestjsSnippets)]
-      else
-        return codeSnippets[math.random(1, #codeSnippets)]
-      end
-    end
-  elseif appName:match("Safari") or appName:match("Chrome") or appName:match("Firefox") then
-    return browserSearches[math.random(1, #browserSearches)]
-  elseif appName:match("Slack") or appName:match("Mail") or appName:match("Messages") then
-    return messageText[math.random(1, #messageText)]
-  elseif appName:match("Notes") or appName:match("TextEdit") or appName:match("Pages") then
-    return documentText[math.random(1, #documentText)]
-  else
-    -- Default: Favor Flutter since user does mostly Flutter work
-    local rand = math.random()
-    if rand > 0.5 then
-      return flutterSnippets[math.random(1, #flutterSnippets)]
-    elseif rand > 0.3 then
-      return codeSnippets[math.random(1, #codeSnippets)]
-    else
-      return nestjsSnippets[math.random(1, #nestjsSnippets)]
-    end
-  end
-end
-
-local function simulateTyping(text)
-  for i = 1, #text do
-    local char = text:sub(i, i)
-    -- Faster typing for more activity counts
-    local delay = 30000
-    if char:match("[%p%d]") then
-      delay = math.random(40000, 80000) -- Faster for punctuation/numbers
-    else
-      delay = math.random(20000, 60000) -- Faster for letters
-    end
-    hs.timer.usleep(delay)
-    hs.eventtap.keyStrokes(char)
-
-    -- Less frequent pauses for more consistent activity
-    if math.random() > 0.95 and i < #text then
-      hs.timer.usleep(math.random(150000, 300000)) -- Shorter pauses
-    end
-  end
-end
-
-local function deleteTypedText(textLength)
-  -- Use backspace for precise deletion (doesn't affect undo history)
-  for i = 1, math.min(textLength, 100) do
-    hs.eventtap.keyStroke({}, "delete")
-    if i % 5 == 0 then
-      hs.timer.usleep(5000) -- Tiny pause every 5 deletes
-    end
-  end
-end
-
 local function undoLastAction()
   if #actionHistory == 0 then
     hs.alert.show("⚠️ No actions to undo", 1)
@@ -318,11 +150,13 @@ local function undoLastAction()
   local lastAction = table.remove(actionHistory, 1)
 
   if lastAction.type == "typing" then
-    -- For typing, we already auto-deleted it, so just show message
-    hs.alert.show("⎌ Already auto-reverted: " .. lastAction.type, 0.8)
+    -- Undo typing by sending Cmd+Z
+    hs.eventtap.keyStroke({ "cmd" }, "z")
+    hs.alert.show("⎌ Undone: " .. lastAction.type, 0.8)
   elseif lastAction.type == "comment" then
-    -- For comment, already auto-deleted, just show message
-    hs.alert.show("⎌ Already auto-reverted: comment", 0.8)
+    -- Undo comment addition
+    hs.eventtap.keyStroke({ "cmd" }, "z")
+    hs.alert.show("⎌ Undone: comment", 0.8)
   elseif lastAction.type == "window_resize" and lastAction.data then
     -- Restore previous window frame
     local win = hs.window.focusedWindow()
@@ -347,48 +181,381 @@ local function clearHistory()
 end
 
 --------------------------------------------------
--- PRIORITY APP HELPERS
+-- TYPING HELPERS
 --------------------------------------------------
-local function isPriorityApp(appName)
-  for _, priority in ipairs(PRIORITY_APPS) do
-    if appName:match(priority) then
-      return true
+local function simulateTyping(text)
+  for i = 1, #text do
+    local char = text:sub(i, i)
+    -- Faster typing for more activity counts
+    local delay = 30000
+    if char:match("[%p%d]") then
+      delay = math.random(40000, 80000) -- Faster for punctuation/numbers
+    else
+      delay = math.random(20000, 60000) -- Faster for letters
+    end
+    hs.timer.usleep(delay)
+    hs.eventtap.keyStrokes(char)
+
+    -- Less frequent pauses for more consistent activity
+    if math.random() > 0.95 and i < #text then
+      hs.timer.usleep(math.random(150000, 300000)) -- Shorter pauses
     end
   end
-  for _, secondary in ipairs(SECONDARY_APPS) do
-    if appName:match(secondary) then
-      return true
-    end
+end
+
+-- Function to add comment in code
+local function addCodeComment()
+  if isPausedByUser then return end
+
+  local comment = codeComments[math.random(1, #codeComments)]
+
+  -- Track this action for undo
+  addToHistory("comment", { text = comment })
+
+  -- Mark simulation time before keyboard actions
+  lastSimulationTime = nowMs()
+
+  -- Go to end of current line and add new line
+  hs.eventtap.keyStroke({ "cmd" }, "right")
+  hs.timer.usleep(30000) -- Faster
+  hs.eventtap.keyStroke({}, "return")
+  hs.timer.usleep(50000) -- Faster
+
+  -- Type the comment faster (counts as more keystrokes)
+  for i = 1, #comment do
+    if isPausedByUser then return end
+    local char = comment:sub(i, i)
+    hs.eventtap.keyStrokes(char)
+    hs.timer.usleep(math.random(20000, 40000)) -- Faster typing
   end
-  return false
+
+  -- Quick undo using Cmd+Z (faster revert)
+  hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+    if isPausedByUser then return end
+    lastSimulationTime = nowMs()
+
+    -- Use Cmd+Z to undo - this works with editor's undo system
+    hs.eventtap.keyStroke({ "cmd" }, "z")
+    hs.timer.usleep(50000)
+    -- Undo again to remove the newline
+    hs.eventtap.keyStroke({ "cmd" }, "z")
+
+    -- Add scrolling after undo (simulates reading the code)
+    hs.timer.doAfter(0.2, function()
+      local scrollAmount = math.random(-20, -5)
+      hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
+
+      -- Always scroll back for clean revert
+      hs.timer.doAfter(AUTO_REVERT_DELAY, function()
+        hs.eventtap.scrollWheel({ 0, -scrollAmount }, {}, "pixel")
+      end)
+    end)
+  end)
 end
 
-local function isVSCode(appName)
-  return appName:match("Code") or appName:match("Visual Studio Code")
-end
 
-local function focusPriorityApp()
-  -- Try to find VS Code and Chrome
+
+--------------------------------------------------
+-- SEQUENTIAL FLOW FUNCTIONS
+--------------------------------------------------
+
+-- Forward declarations
+local executeStep1, executeStep2, executeStep3, executeStep4, executeStep5
+
+-- Step 1: Add comments in VS Code for 5 seconds, then undo
+executeStep1 = function()
+  print("📝 Step 1: Adding comments in VS Code...")
+  lastSimulationTime = nowMs()
+
   local vscode = hs.application.find("Code") or hs.application.find("Visual Studio Code")
-  local chrome = hs.application.find("Chrome") or hs.application.find("Google Chrome")
+  if vscode then
+    vscode:activate()
+    hs.timer.usleep(500000)
 
-  -- 80% chance to focus VS Code if it exists, otherwise Chrome
-  if vscode and math.random(1, 100) <= VSCODE_FOCUS_CHANCE then
-    vscode:activate()
-    return true
-  elseif chrome then
-    chrome:activate()
-    return true
-  elseif vscode then
-    -- Fallback to VS Code if Chrome wasn't chosen
-    vscode:activate()
-    return true
+    -- Add 2-3 comments over 5 seconds
+    local commentCount = math.random(2, 3)
+    for i = 1, commentCount do
+      local timer = hs.timer.doAfter((i - 1) * 2, function()
+        if not isPausedByUser then
+          addCodeComment()
+        end
+      end)
+      table.insert(activeTimers, timer)
+    end
+
+    -- Move to next step after duration
+    local nextStepTimer = hs.timer.doAfter(STEP_DELAYS.COMMENT_DURATION, function()
+      if isPausedByUser then return end
+      currentStep = 2
+      stepStartTime = os.time()
+      executeStep2()
+    end)
+  else
+    -- Skip to next step if VS Code not found
+    currentStep = 2
+    stepStartTime = os.time()
+    executeStep2()
   end
-  return false
+end
+
+-- Step 2: Wait 5s, then move cursor/resize windows for 5-7s (no typing)
+executeStep2 = function()
+  print("⏳ Step 2: Waiting, then cursor movements...")
+  lastSimulationTime = nowMs()
+
+  -- Wait 5 seconds
+  local waitTimer = hs.timer.doAfter(STEP_DELAYS.WAIT_BEFORE_CURSOR, function()
+    if isPausedByUser then return end
+    lastSimulationTime = nowMs()
+
+    -- Perform cursor movements and window resizing for 5-7 seconds
+    local duration = math.random(5, 7)
+    local actionCount = math.random(3, 5)
+
+    for i = 1, actionCount do
+      local actionTimer = hs.timer.doAfter((i - 1) * (duration / actionCount), function()
+        if isPausedByUser then return end
+
+        local actionType = math.random(1, 3)
+        if actionType == 1 then
+          -- Smooth cursor movement
+          lastSimulationTime = nowMs()
+          local start = hs.mouse.absolutePosition()
+          local target = {
+            x = start.x + math.random(-200, 200),
+            y = start.y + math.random(-100, 100)
+          }
+
+          local steps = 10
+          for j = 1, steps do
+            hs.timer.doAfter(0.03 * j, function()
+              if isPausedByUser then return end
+              lastSimulationTime = nowMs()
+              hs.mouse.absolutePosition({
+                x = start.x + (target.x - start.x) * (j / steps),
+                y = start.y + (target.y - start.y) * (j / steps)
+              })
+            end)
+          end
+        elseif actionType == 2 then
+          -- Window resize
+          lastSimulationTime = nowMs()
+          local win = hs.window.focusedWindow()
+          if win then
+            local f = win:frame()
+            local originalFrame = hs.geometry.copy(f)
+            f.w = math.max(400, f.w + math.random(-80, 80))
+            f.h = math.max(300, f.h + math.random(-60, 60))
+            win:setFrame(f, 0.3)
+
+            hs.timer.doAfter(1.5, function()
+              if isPausedByUser then return end
+              if win and win:isVisible() then
+                win:setFrame(originalFrame, 0.3)
+              end
+            end)
+          end
+        else
+          -- Scroll
+          lastSimulationTime = nowMs()
+          local scrollAmount = math.random(-25, -10)
+          hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
+          hs.timer.doAfter(1, function()
+            if isPausedByUser then return end
+            hs.eventtap.scrollWheel({ 0, -scrollAmount }, {}, "pixel")
+          end)
+        end
+      end)
+      table.insert(activeTimers, actionTimer)
+    end
+
+    -- Move to step 3 after duration
+    local nextStepTimer = hs.timer.doAfter(duration, function()
+      if isPausedByUser then return end
+      currentStep = 3
+      stepStartTime = os.time()
+      executeStep3()
+    end)
+    table.insert(activeTimers, nextStepTimer)
+  end)
+  table.insert(activeTimers, waitTimer)
+end
+
+-- Step 3: Search in Spotlight or Chrome (Flutter/dev related)
+executeStep3 = function()
+  print("🔍 Step 3: Searching...")
+  lastSimulationTime = nowMs()
+
+  local searchTimer = hs.timer.doAfter(STEP_DELAYS.SEARCH_DELAY, function()
+    if isPausedByUser then return end
+    lastSimulationTime = nowMs()
+
+    local searchType = math.random(1, 2)
+
+    if searchType == 1 then
+      -- Spotlight search
+      local searchTerms = {
+        "flutter widgets", "dart programming", "vs code", "terminal",
+        "flutter state management", "firebase flutter", "flutter docs"
+      }
+
+      hs.eventtap.keyStroke({ "cmd" }, "space")
+      hs.timer.doAfter(0.4, function()
+        if isPausedByUser then return end
+        lastSimulationTime = nowMs()
+        local term = searchTerms[math.random(1, #searchTerms)]
+        simulateTyping(term)
+
+        hs.timer.doAfter(1.5, function()
+          if isPausedByUser then return end
+          lastSimulationTime = nowMs()
+          hs.eventtap.keyStroke({}, "escape")
+
+          -- Move to step 4
+          hs.timer.doAfter(0.5, function()
+            currentStep = 4
+            executeStep4()
+          end)
+        end)
+      end)
+    else
+      -- Chrome/Browser search
+      local chrome = hs.application.find("Chrome") or hs.application.find("Google Chrome")
+      if chrome then
+        chrome:activate()
+        hs.timer.usleep(500000)
+
+        -- Open new tab and search
+        hs.eventtap.keyStroke({ "cmd" }, "t")
+        hs.timer.doAfter(0.4, function()
+          if isPausedByUser then return end
+          lastSimulationTime = nowMs()
+          local searches = browserSearches
+          local searchQuery = searches[math.random(1, #searches)]
+          simulateTyping(searchQuery)
+
+          hs.timer.doAfter(1.5, function()
+            if isPausedByUser then return end
+            lastSimulationTime = nowMs()
+            hs.eventtap.keyStroke({ "cmd" }, "w") -- Close tab
+
+            -- Move to step 4
+            hs.timer.doAfter(0.3, function()
+              currentStep = 4
+              executeStep4()
+            end)
+          end)
+        end)
+      else
+        -- Skip to step 4 if Chrome not found
+        currentStep = 4
+        executeStep4()
+      end
+    end
+  end)
+  table.insert(activeTimers, searchTimer)
+end
+
+-- Step 4: Change VS Code tabs (files)
+executeStep4 = function()
+  print("📑 Step 4: Changing VS Code tabs...")
+  lastSimulationTime = nowMs()
+
+  local tabTimer = hs.timer.doAfter(STEP_DELAYS.TAB_CHANGE_DELAY, function()
+    if isPausedByUser then return end
+    lastSimulationTime = nowMs()
+
+    local vscode = hs.application.find("Code") or hs.application.find("Visual Studio Code")
+    if vscode then
+      vscode:activate()
+      hs.timer.usleep(300000)
+
+      -- Switch between tabs using Ctrl+Tab
+      local tabSwitches = math.random(2, 4)
+      for i = 1, tabSwitches do
+        hs.timer.doAfter(i * 0.8, function()
+          if isPausedByUser then return end
+          lastSimulationTime = nowMs()
+          hs.eventtap.keyStroke({ "ctrl" }, "tab")
+        end)
+      end
+
+      -- Move to step 5
+      hs.timer.doAfter(tabSwitches * 0.8 + 0.5, function()
+        if isPausedByUser then return end
+        currentStep = 5
+        executeStep5()
+      end)
+    else
+      -- Skip to step 5 if VS Code not found
+      currentStep = 5
+      executeStep5()
+    end
+  end)
+  table.insert(activeTimers, tabTimer)
+end
+
+-- Step 5: Move cursor or resize window, then loop back
+executeStep5 = function()
+  print("🖱️ Step 5: Final cursor movement...")
+  lastSimulationTime = nowMs()
+
+  local finalTimer = hs.timer.doAfter(STEP_DELAYS.FINAL_CURSOR_DELAY, function()
+    if isPausedByUser then return end
+    lastSimulationTime = nowMs()
+
+    -- Final cursor movement or window action
+    if math.random() > 0.5 then
+      -- Smooth cursor movement
+      local start = hs.mouse.absolutePosition()
+      local target = {
+        x = start.x + math.random(-150, 150),
+        y = start.y + math.random(-80, 80)
+      }
+
+      local steps = 12
+      for i = 1, steps do
+        hs.timer.doAfter(0.04 * i, function()
+          if isPausedByUser then return end
+          lastSimulationTime = nowMs()
+          hs.mouse.absolutePosition({
+            x = start.x + (target.x - start.x) * (i / steps),
+            y = start.y + (target.y - start.y) * (i / steps)
+          })
+        end)
+      end
+    else
+      -- Small window adjustment
+      lastSimulationTime = nowMs()
+      local win = hs.window.focusedWindow()
+      if win then
+        local f = win:frame()
+        local originalFrame = hs.geometry.copy(f)
+        f.x = f.x + math.random(-30, 30)
+        f.y = f.y + math.random(-20, 20)
+        win:setFrame(f, 0.2)
+
+        hs.timer.doAfter(1, function()
+          if win and win:isVisible() then
+            win:setFrame(originalFrame, 0.2)
+          end
+        end)
+      end
+    end
+
+    -- Loop back to step 1 after a brief pause
+    hs.timer.doAfter(2, function()
+      if isPausedByUser then return end
+      currentStep = 1
+      stepStartTime = os.time()
+      executeStep1()
+    end)
+  end)
+  table.insert(activeTimers, finalTimer)
 end
 
 --------------------------------------------------
--- ACTIVITY FUNCTION (REAL INPUT)
+-- MAIN ACTIVITY CONTROLLER
 --------------------------------------------------
 local function simulateActivity()
   -- Skip if user is active
@@ -399,464 +566,50 @@ local function simulateActivity()
 
   -- Mark this as simulated activity FIRST to prevent self-pause
   lastSimulationTime = nowMs()
-  print("✓ Executing activity...")
 
-  -- Focus priority apps less frequently (60% chance)
-  if math.random(1, 100) <= PRIORITY_APP_FOCUS_CHANCE then
-    focusPriorityApp()
-    hs.timer.usleep(500000) -- Wait 500ms for app to focus
+  -- Execute current step in the flow
+  if currentStep == 1 then
+    executeStep1()
+  elseif currentStep == 2 then
+    executeStep2()
+  elseif currentStep == 3 then
+    executeStep3()
+  elseif currentStep == 4 then
+    executeStep4()
+  elseif currentStep == 5 then
+    executeStep5()
   end
-
-  -- Always: mouse movement that reverts (counts as activity)
-  local originalPos = hs.mouse.absolutePosition()
-  hs.mouse.absolutePosition({
-    x = originalPos.x + math.random(-12, 12),
-    y = originalPos.y + math.random(-12, 12)
-  })
-  -- Revert mouse position after delay
-  hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-    hs.mouse.absolutePosition(originalPos)
-  end)
-
-  local action = math.random(1, 100)
-
-  ------------------------------------------------
-  -- OPTION 1: Type text and revert in ANY app (25% - REDUCED)
-  ------------------------------------------------
-  if action <= 25 and ENABLE_TYPING then
-    lastSimulationTime = nowMs() -- Prevent self-pause during typing
-    local win = hs.window.focusedWindow()
-    if win then
-      local appName = win:application():name()
-
-      -- Get intelligent text based on the app (works for ALL apps)
-      local text = getTextForApp(appName)
-      local textLength = #text
-
-      -- Track this action for undo
-      addToHistory("typing", { text = text, app = appName })
-
-      -- Type immediately (no delay)
-      simulateTyping(text)
-
-      -- Auto-revert: delete the typed text quickly
-      hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-        deleteTypedText(textLength)
-      end)
-    end
-
-    ------------------------------------------------
-    -- OPTION 2: Click actions - buttons, UI elements, tabs (35% - EQUAL PRIORITY)
-    ------------------------------------------------
-  elseif action <= 60 then
-    lastSimulationTime = nowMs() -- Prevent self-pause
-    local originalPos = hs.mouse.absolutePosition()
-
-    -- Different types of click interactions
-    local clickType = math.random(1, 5)
-
-    if clickType == 1 then
-      -- Single click at current position (like selecting text or clicking UI)
-      addToHistory("click", { type = "single", pos = originalPos })
-      hs.eventtap.leftClick(originalPos)
-    elseif clickType == 2 then
-      -- Double click (like selecting word or opening file)
-      addToHistory("click", { type = "double", pos = originalPos })
-      hs.eventtap.leftClick(originalPos)
-      hs.timer.usleep(50000)
-      hs.eventtap.leftClick(originalPos)
-    elseif clickType == 3 then
-      -- Move and click (like clicking a button or tab)
-      local target = {
-        x = originalPos.x + math.random(-200, 200),
-        y = originalPos.y + math.random(-100, 100)
-      }
-
-      -- Smooth movement to target
-      local steps = math.random(5, 10)
-      for i = 1, steps do
-        hs.timer.doAfter(0.02 * i, function()
-          hs.mouse.absolutePosition({
-            x = originalPos.x + (target.x - originalPos.x) * (i / steps),
-            y = originalPos.y + (target.y - originalPos.y) * (i / steps)
-          })
-        end)
-      end
-
-      -- Click at target position
-      hs.timer.doAfter(0.02 * steps + 0.05, function()
-        addToHistory("click", { type = "move_and_click", pos = target, original = originalPos })
-        hs.eventtap.leftClick(target)
-
-        -- Auto-revert: move back to original position
-        if ENABLE_AUTO_REVERT then
-          hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-            for j = 1, steps do
-              hs.timer.doAfter(0.02 * j, function()
-                local currentPos = hs.mouse.absolutePosition()
-                hs.mouse.absolutePosition({
-                  x = currentPos.x + (originalPos.x - currentPos.x) * (j / steps),
-                  y = currentPos.y + (originalPos.y - currentPos.y) * (j / steps)
-                })
-              end)
-            end
-          end)
-        end
-      end)
-    elseif clickType == 4 then
-      -- Click and drag (like selecting text or resizing)
-      local dragTarget = {
-        x = originalPos.x + math.random(-100, 100),
-        y = originalPos.y + math.random(-50, 50)
-      }
-
-      addToHistory("click", { type = "drag", start = originalPos, target = dragTarget })
-
-      -- Perform drag
-      hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.leftMouseDown, originalPos):post()
-      hs.timer.usleep(50000)
-
-      -- Drag to target
-      local steps = 8
-      for i = 1, steps do
-        hs.timer.doAfter(0.03 * i, function()
-          local dragPos = {
-            x = originalPos.x + (dragTarget.x - originalPos.x) * (i / steps),
-            y = originalPos.y + (dragTarget.y - originalPos.y) * (i / steps)
-          }
-          hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.leftMouseDragged, dragPos):post()
-        end)
-      end
-
-      -- Release mouse
-      hs.timer.doAfter(0.03 * steps + 0.05, function()
-        hs.eventtap.event.newMouseEvent(hs.eventtap.event.types.leftMouseUp, dragTarget):post()
-
-        -- Auto-revert: move back
-        if ENABLE_AUTO_REVERT then
-          hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-            hs.mouse.absolutePosition(originalPos)
-          end)
-        end
-      end)
-    else
-      -- Right click (context menu)
-      addToHistory("click", { type = "right", pos = originalPos })
-      hs.eventtap.rightClick(originalPos)
-
-      -- Close context menu with Escape
-      hs.timer.doAfter(0.4, function()
-        hs.eventtap.keyStroke({}, "escape")
-      end)
-    end -- Close clickType if statement
-
-    ------------------------------------------------
-    -- OPTION 3: Add code comments in VS Code ONLY (20% - VSCode typing priority)
-    ------------------------------------------------
-  elseif action <= 80 then
-    lastSimulationTime = nowMs() -- Prevent self-pause
-    local win = hs.window.focusedWindow()
-    if win and isVSCode(win:application():name()) then
-      -- Smart comment insertion: go to end of line or skip a line
-      if math.random() > 0.5 then
-        -- Go to end of current line
-        hs.eventtap.keyStroke({ "cmd" }, "right")
-      else
-        -- Skip to next line
-        hs.eventtap.keyStroke({}, "down")
-        hs.eventtap.keyStroke({ "cmd" }, "right")
-      end
-      hs.timer.usleep(50000)
-
-      -- Add the comment
-      addCodeComment()
-    else
-      -- If not VSCode, just do a simple scroll
-      local scrollAmount = math.random(-25, -8)
-      hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
-      if ENABLE_AUTO_REVERT then
-        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-          hs.eventtap.scrollWheel({ 0, -scrollAmount }, {}, "pixel")
-        end)
-      end
-    end
-
-    ------------------------------------------------
-    -- OPTION 4: Scroll (10% - normal)
-    ------------------------------------------------
-  elseif action <= 90 then
-    lastSimulationTime = nowMs() -- Prevent self-pause
-    -- More aggressive scrolling
-    local scrollType = math.random(1, 3)
-    if scrollType == 1 then
-      -- Single scroll
-      local amount = math.random(-30, -5)
-      addToHistory("scroll", { amount = amount })
-      hs.eventtap.scrollWheel({ 0, amount }, {}, "pixel")
-
-      -- Auto-revert: scroll back after delay
-      if ENABLE_AUTO_REVERT then
-        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-          hs.eventtap.scrollWheel({ 0, -amount }, {}, "pixel")
-        end)
-      end
-    elseif scrollType == 2 then
-      -- Double scroll (rapid)
-      local amount1 = math.random(-20, -8)
-      local amount2 = math.random(-20, -8)
-      addToHistory("scroll", { amount = amount1 + amount2 })
-      hs.eventtap.scrollWheel({ 0, amount1 }, {}, "pixel")
-      hs.timer.doAfter(0.1, function()
-        hs.eventtap.scrollWheel({ 0, amount2 }, {}, "pixel")
-
-        -- Auto-revert: scroll back after delay
-        if ENABLE_AUTO_REVERT then
-          hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-            hs.eventtap.scrollWheel({ 0, -(amount1 + amount2) }, {}, "pixel")
-          end)
-        end
-      end)
-    else
-      -- Horizontal scroll
-      local amount = math.random(-15, 15)
-      addToHistory("scroll", { amount = amount, horizontal = true })
-      hs.eventtap.scrollWheel({ amount, 0 }, {}, "pixel")
-
-      -- Auto-revert: scroll back after delay
-      if ENABLE_AUTO_REVERT then
-        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-          hs.eventtap.scrollWheel({ -amount, 0 }, {}, "pixel")
-        end)
-      end
-    end
-
-    ------------------------------------------------
-    -- OPTION 5: Cmd+Tab window switching (5%)
-    ------------------------------------------------
-  elseif action <= 95 then
-    -- Update timestamp to prevent self-pause during Cmd+Tab
-    lastSimulationTime = nowMs()
-
-    -- Method 1: Use Cmd+Tab (70% of the time)
-    if math.random() > 0.3 then
-      -- Proper Cmd+Tab implementation
-      hs.eventtap.keyStroke({ "cmd" }, "tab")
-      hs.timer.usleep(150000)
-
-      -- Sometimes tab multiple times
-      if math.random() > 0.5 then
-        hs.eventtap.keyStroke({ "cmd" }, "tab")
-      end
-    else
-      -- Method 2: Direct app activation (30% of the time)
-      focusPriorityApp()
-      hs.timer.usleep(300000)
-    end
-
-    -- Scroll after switching
-    hs.timer.doAfter(0.4, function()
-      lastSimulationTime = nowMs() -- Prevent pause
-      hs.eventtap.scrollWheel({ 0, math.random(-20, -8) }, {}, "pixel")
-    end)
-
-    ------------------------------------------------
-    -- OPTION 6: Smooth mouse movement (5% - normal)
-    ------------------------------------------------
-  else
-    lastSimulationTime = nowMs() -- Prevent self-pause
-    local start = hs.mouse.absolutePosition()
-    local target = {
-      x = start.x + math.random(-150, 150), -- Larger movements
-      y = start.y + math.random(-100, 100)
-    }
-
-    local steps = math.random(8, 15) -- More steps for smoother movement
-    for i = 1, steps do
-      hs.timer.doAfter(0.02 * i, function()
-        hs.mouse.absolutePosition({
-          x = start.x + (target.x - start.x) * (i / steps),
-          y = start.y + (target.y - start.y) * (i / steps)
-        })
-      end)
-    end
-
-    -- Auto-revert: move mouse back to start after delay
-    if ENABLE_AUTO_REVERT then
-      hs.timer.doAfter(AUTO_REVERT_DELAY + 0.3, function()
-        for i = 1, steps do
-          hs.timer.doAfter(0.02 * i, function()
-            local currentPos = hs.mouse.absolutePosition()
-            hs.mouse.absolutePosition({
-              x = currentPos.x + (start.x - currentPos.x) * (i / steps),
-              y = currentPos.y + (start.y - currentPos.y) * (i / steps)
-            })
-          end)
-        end
-      end)
-    else
-      -- Sometimes click at the end of movement (old behavior)
-      if math.random() > 0.7 then
-        hs.timer.doAfter(0.02 * steps + 0.1, function()
-          hs.eventtap.leftClick(hs.mouse.absolutePosition())
-        end)
-      end
-    end
-  end -- Close main action if/elseif chain
-
-  ------------------------------------------------
-  -- (Mission Control disabled to prioritize typing)
-  ------------------------------------------------
-
-  ------------------------------------------------
-  -- OPTION 7: Window resize / move (2%)
-  ------------------------------------------------
-  if action <= 97 then
-    local win = hs.window.focusedWindow()
-    if win then
-      local f = win:frame()
-      local originalFrame = hs.geometry.copy(f) -- Save original
-      local s = win:screen():frame()
-
-      if math.random() > 0.5 then
-        f.w = math.max(400, f.w + math.random(-50, 50))
-        f.h = math.max(300, f.h + math.random(-50, 50))
-      else
-        f.x = math.max(s.x, math.min(s.x + s.w - f.w, f.x + math.random(-30, 30)))
-        f.y = math.max(s.y, math.min(s.y + s.h - f.h, f.y + math.random(-30, 30)))
-      end
-
-      addToHistory("window_resize", { originalFrame = originalFrame })
-      win:setFrame(f, 0.2)
-
-      -- Auto-revert: restore window after delay
-      if ENABLE_AUTO_REVERT then
-        hs.timer.doAfter(AUTO_REVERT_DELAY + 0.5, function()
-          if win and win:isVisible() then
-            win:setFrame(originalFrame, 0.2)
-          end
-        end)
-      end
-    end
-  end -- Close OPTION 7
-
-  ------------------------------------------------
-  -- OPTION 8: Spotlight search with typing (rare - only after 5+ minutes)
-  ------------------------------------------------
-  local timeSinceSpotlight = os.time() - lastSpotlightTime
-  if action <= 98 and ENABLE_GLOBAL_UI and ENABLE_TYPING and timeSinceSpotlight >= SPOTLIGHT_MIN_INTERVAL then
-    lastSpotlightTime = os.time()
-    hs.eventtap.keyStroke({ "cmd" }, "space")
-    hs.timer.doAfter(0.3, function()
-      local searchTerms = { "calculator", "system preferences", "activity monitor", "finder", "safari", "notes",
-        "terminal" }
-      local term = searchTerms[math.random(1, #searchTerms)]
-      local termLength = #term
-      simulateTyping(term)
-      -- Delete the search and close spotlight
-      hs.timer.doAfter(0.7, function()
-        deleteTypedText(termLength)
-        hs.timer.usleep(200000)
-        hs.eventtap.keyStroke({}, "escape")
-      end)
-    end)
-  end -- Close OPTION 8 Spotlight
-
-  ------------------------------------------------
-  -- OPTION 9: Copy/Paste/Select operations (remaining)
-  ------------------------------------------------
-  if action > 98 and action <= 100 then
-    local operations = {
-      function()
-        hs.eventtap.keyStroke({ "cmd" }, "a") -- Select all
-        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-          hs.eventtap.keyStroke({}, "right")  -- Deselect
-        end)
-      end,
-      function()
-        hs.eventtap.keyStroke({ "cmd" }, "c") -- Copy (safe, no visual change)
-      end,
-      function()
-        hs.eventtap.keyStroke({ "cmd" }, "f") -- Find
-        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-          hs.eventtap.keyStroke({}, "escape") -- Close find
-        end)
-      end,
-      function()
-        hs.eventtap.keyStroke({ "shift" }, "left")
-        hs.timer.usleep(50000)
-        hs.eventtap.keyStroke({ "shift" }, "left")
-        hs.eventtap.keyStroke({ "shift" }, "left")
-        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-          hs.eventtap.keyStroke({}, "right") -- Deselect
-        end)
-      end,
-      function()
-        hs.eventtap.keyStroke({ "cmd" }, "left")           -- Move to beginning
-        hs.timer.usleep(80000)
-        hs.eventtap.keyStroke({ "shift", "cmd" }, "right") -- Select to end
-        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-          hs.eventtap.keyStroke({}, "right")               -- Deselect
-        end)
-      end,
-      function()
-        -- Quick navigation that counts as activity
-        hs.eventtap.keyStroke({ "cmd" }, "up")  -- Go to top
-        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-          hs.eventtap.keyStroke({ "cmd" }, "z") -- Undo navigation if it changed something
-        end)
-      end,
-      function()
-        -- Open/close sidebar (VS Code command palette)
-        hs.eventtap.keyStroke({ "cmd" }, "b")   -- Toggle sidebar
-        hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-          hs.eventtap.keyStroke({ "cmd" }, "b") -- Toggle back
-        end)
-      end,
-    }
-    operations[math.random(1, #operations)]()
-  end -- Close OPTION 9
-
-  ------------------------------------------------
-  -- OPTION 10: Rapid scroll burst (fallback)
-  ------------------------------------------------
-  if math.random(1, 100) <= 3 then
-    -- More intensive scroll bursts
-    local burstCount = math.random(4, 8)
-    local totalScroll = 0
-    for i = 1, burstCount do
-      hs.timer.doAfter(0.08 * i, function()
-        local scrollAmount = math.random(-18, -8)
-        totalScroll = totalScroll + scrollAmount
-        hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
-      end)
-    end
-
-    -- Auto-revert: scroll back after burst
-    if ENABLE_AUTO_REVERT then
-      hs.timer.doAfter(AUTO_REVERT_DELAY + 0.8, function()
-        hs.eventtap.scrollWheel({ 0, -totalScroll }, {}, "pixel")
-      end)
-    end
-  end -- Close OPTION 10
-end   -- Close simulateActivity function
+end -- Close simulateActivity function
 
 --------------------------------------------------
--- SCHEDULER (NON-MECHANICAL)
+-- SCHEDULER (SIMPLIFIED FOR FLOW)
 --------------------------------------------------
 local function scheduleNext()
-  activityTimer = hs.timer.doAfter(math.random(MIN_INTERVAL, MAX_INTERVAL), function()
+  -- Just start the flow - it will handle its own timing
+  if currentStep == 1 then
     simulateActivity()
-    scheduleNext()
-  end)
+  end
 end
 
 --------------------------------------------------
 -- START / STOP
 --------------------------------------------------
 local function startAutomation()
-  if activityTimer then return end
+  -- Don't start if already paused or running
+  if isPausedByUser then
+    print("⚠️ Cannot start - manually stopped")
+    return
+  end
+  if #activeTimers > 0 then
+    print("⚠️ Already running")
+    return
+  end
+
+  currentStep = 1
+  stepStartTime = os.time()
   scheduleNext()
-  hs.alert.show("▶ Activity automation running", 1)
+  hs.alert.show("▶ Sequential automation started", 1)
+  print("▶️ Automation started")
 end
 
 local function stopAutomation()
@@ -864,6 +617,17 @@ local function stopAutomation()
     activityTimer:stop()
     activityTimer = nil
   end
+
+  -- Stop all active timers
+  for _, timer in ipairs(activeTimers) do
+    if timer then
+      timer:stop()
+    end
+  end
+  activeTimers = {}
+
+  currentStep = 1
+  print("⏹ All automation stopped")
 end
 
 --------------------------------------------------
@@ -873,16 +637,17 @@ local function onUserInput(event)
   local now = nowMs()
   local timeSinceLastSim = now - lastSimulationTime
 
-  -- Only check grace period, don't block if already paused
-  if timeSinceLastSim < SELF_EVENT_GRACE_MS then
-    return false -- Likely a simulated event, ignore
+  -- Check if this is likely a simulated event (very recent)
+  if timeSinceLastSim < 500 then
+    return false -- Very recent simulation, likely our own event
   end
 
-  -- Real user input detected
+  -- Real user input detected - immediately stop everything
   if not isPausedByUser then
     isPausedByUser = true
     stopAutomation()
-    hs.alert.show("⏸ Paused - User active", 0.5)
+    print("⏸ User input detected - pausing automation")
+    -- No alert to avoid disruption
   end
 
   -- Reset the resume timer
@@ -920,10 +685,19 @@ userEventTap:start()
 -- MANUAL TOGGLE (HOTKEY)
 --------------------------------------------------
 hs.hotkey.bind({ "cmd", "alt", "ctrl" }, "S", function()
-  if activityTimer then
+  if isPausedByUser or #activeTimers > 0 then
+    -- Force stop everything
+    isPausedByUser = true
     stopAutomation()
-    hs.alert.show("⛔ Automation stopped")
+    if resumeTimer then
+      resumeTimer:stop()
+      resumeTimer = nil
+    end
+    hs.alert.show("⛔ Automation STOPPED", 1.5)
+    print("🛑 Manual stop - automation disabled")
   else
+    -- Reset and start
+    isPausedByUser = false
     startAutomation()
   end
 end)
