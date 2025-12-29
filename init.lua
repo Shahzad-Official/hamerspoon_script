@@ -1,658 +1,755 @@
---------------------------------------------------
--- Human-like activity simulator (macOS)
--- Pauses on real user input, resumes after 5s idle
--- Rectified + hardened version
---------------------------------------------------
+-- =============================================================================
+-- FLUTTER DEVELOPER SIMULATOR FOR HAMMERSPOON
+-- =============================================================================
+-- Simulates a real human Flutter developer on macOS
+-- Focus: VS Code (Dart/Flutter), Chrome (ChatGPT), Terminal usage
+--
+-- FEATURES:
+-- ✓ Loops forever with finite-state machine
+-- ✓ Never leaves permanent changes (undo-based typing)
+-- ✓ Feels human (reading > typing)
+-- ✓ Hotkey to start/stop with alerts (Cmd+Ctrl+Shift+F)
+-- ✓ Console logging for each activity
+--
+-- ACTIVITY DISTRIBUTION:
+-- VS Code (Flutter/Dart): 70%
+-- Chrome (ChatGPT tab): 15%
+-- Cursor-only thinking: 7%
+-- VS Code terminal: 5%
+-- Spotlight / OS actions: 3%
+-- =============================================================================
 
-math.randomseed(os.time())
+-- Configuration
+local CONFIG = {
+  -- Timing (in seconds)
+  MIN_READ_TIME = 2.0,   -- Minimum reading pause
+  MAX_READ_TIME = 6.0,   -- Maximum reading pause
+  MIN_TYPE_DELAY = 0.05, -- Minimum delay between keystrokes
+  MAX_TYPE_DELAY = 0.20, -- Maximum delay between keystrokes
+  THINK_PAUSE_MIN = 1.0, -- Minimum thinking pause
+  THINK_PAUSE_MAX = 4.0, -- Maximum thinking pause
 
---------------------------------------------------
--- CONFIG
---------------------------------------------------
-local IDLE_SECONDS = 5
-local SELF_EVENT_GRACE_MS = 500 -- Short grace period to avoid blocking user
-local AUTO_REVERT_DELAY = 0.8   -- Fast revert to avoid conflicts (0.8s)
+  -- Apps
+  VSCODE_BUNDLE = "com.microsoft.VSCode",
+  CHROME_BUNDLE = "com.google.Chrome",
 
--- SEQUENTIAL FLOW CONFIG
-local STEP_DELAYS = {
-  COMMENT_DURATION = 5,   -- Step 1: Type comments for 5 seconds
-  WAIT_BEFORE_CURSOR = 5, -- Step 2: Wait 5 seconds before cursor movement
-  CURSOR_DURATION = 6,    -- Step 2: Move cursor/resize for 6 seconds average
-  SEARCH_DELAY = 2,       -- Step 3: Delay before search
-  TAB_CHANGE_DELAY = 2,   -- Step 4: Delay before tab change
-  FINAL_CURSOR_DELAY = 2, -- Step 5: Final cursor movement delay
+  -- State machine weights (probability out of 100)
+  WEIGHTS = {
+    VSCODE_READ = 25,    -- VS Code reading + cursor
+    VSCODE_TAB = 15,     -- VS Code tab switching
+    VSCODE_TYPE = 15,    -- Dart typing + undo
+    VSCODE_SEARCH = 10,  -- VS Code search
+    VSCODE_TERMINAL = 5, -- VS Code terminal
+    CHROME_CHATGPT = 15, -- Chrome ChatGPT
+    CURSOR_THINK = 7,    -- Cursor-only thinking
+    SPOTLIGHT = 3,       -- Spotlight/OS actions
+    IDLE_PAUSE = 5,      -- Random idle pause
+  },
 }
 
---------------------------------------------------
--- STATE
---------------------------------------------------
-local activityTimer = nil
-local resumeTimer = nil
-local isPausedByUser = false
-local lastSimulationTime = 0
+-- =============================================================================
+-- STATE MANAGEMENT
+-- =============================================================================
 
--- Sequential flow state
-local currentStep = 1
-local stepStartTime = 0
-local activeTimers = {} -- Track all active timers
+local State = {
+  running = false,
+  stepTimer = nil,
+  typeTimer = nil,
+  undoCount = 0,
+  actionCount = 0,
+}
 
---------------------------------------------------
--- TIME (MONOTONIC)
---------------------------------------------------
-local function nowMs()
-  return hs.timer.secondsSinceEpoch() * 1000
+-- =============================================================================
+-- LOGGING
+-- =============================================================================
+
+local function log(message)
+  print("[FlutterSim] " .. os.date("%H:%M:%S") .. " - " .. message)
 end
 
---------------------------------------------------
--- TYPING HELPERS
---------------------------------------------------
+local function logActivity(activity)
+  State.actionCount = State.actionCount + 1
+  log(string.format("#%d ▶ %s", State.actionCount, activity))
+end
 
+-- =============================================================================
+-- UTILITY FUNCTIONS
+-- =============================================================================
 
--- Browser search queries for developers (Flutter-focused)
-local browserSearches = {
-  "flutter widgets catalog", "flutter state management", "dart async programming",
-  "flutter bloc pattern", "flutter riverpod tutorial", "dart null safety",
-  "flutter responsive design", "firebase flutter integration", "flutter animations",
-  "stackoverflow flutter", "flutter pub packages", "flutter dio http",
-  "nestjs documentation", "nestjs typeorm relations", "nestjs jwt authentication",
-  "docker nestjs production", "nestjs swagger setup", "nestjs middleware"
-}
+-- Random float between min and max
+local function randomFloat(min, max)
+  return min + math.random() * (max - min)
+end
 
+-- Random integer between min and max (inclusive)
+local function randomInt(min, max)
+  return math.random(min, max)
+end
 
+-- Weighted random selection
+local function weightedRandom()
+  local total = 0
+  for _, weight in pairs(CONFIG.WEIGHTS) do
+    total = total + weight
+  end
 
--- Generic code comments for VS Code
-local codeComments = {
-  "// TODO: Add null safety check",
-  "// FIXME: Handle async state properly",
-  "// TODO: Implement error boundary",
-  "// NOTE: Widget rebuild optimization needed",
-  "// TODO: Add loading state",
-  "// FIXME: Memory leak in stream subscription",
-  "// TODO: Extract reusable widget",
-  "// NOTE: Consider using const constructor",
-  "// TODO: Add input validation",
-  "// FIXME: Dispose controllers properly",
-  "// TODO: Implement state management",
-  "// NOTE: Move to separate file",
-  "// TODO: Add accessibility labels",
-  "// FIXME: Handle navigation back press",
-  "// TODO: Optimize build method",
-  "// NOTE: Consider using ListView.builder",
-  "// TODO: Add error handling for API call",
-  "// FIXME: Update deprecated widget",
-  "// TODO: Implement dependency injection",
-  "// NOTE: Cache network images",
-  "// TODO: Add unit tests for business logic",
-  "// FIXME: Fix widget overflow issue",
-  "// TODO: Implement proper form validation",
-  "// NOTE: Use MediaQuery for responsive layout",
-  "// TODO: Add localization support",
-  "// FIXME: Handle keyboard dismiss",
-  "// TODO: Optimize StatefulWidget lifecycle",
-  "// NOTE: Consider using FutureBuilder",
-  "// TODO: Add permission handling",
-  "// FIXME: Prevent duplicate API calls"
-}
+  local roll = math.random(1, total)
+  local cumulative = 0
 
---------------------------------------------------
--- TYPING HELPERS
---------------------------------------------------
-local function simulateTyping(text)
-  for i = 1, #text do
-    local char = text:sub(i, i)
-    -- Faster typing for more activity counts
-    local delay = 30000
-    if char:match("[%p%d]") then
-      delay = math.random(40000, 80000) -- Faster for punctuation/numbers
-    else
-      delay = math.random(20000, 60000) -- Faster for letters
+  local actions = {
+    { name = "VSCODE_READ",     weight = CONFIG.WEIGHTS.VSCODE_READ },
+    { name = "VSCODE_TAB",      weight = CONFIG.WEIGHTS.VSCODE_TAB },
+    { name = "VSCODE_TYPE",     weight = CONFIG.WEIGHTS.VSCODE_TYPE },
+    { name = "VSCODE_SEARCH",   weight = CONFIG.WEIGHTS.VSCODE_SEARCH },
+    { name = "VSCODE_TERMINAL", weight = CONFIG.WEIGHTS.VSCODE_TERMINAL },
+    { name = "CHROME_CHATGPT",  weight = CONFIG.WEIGHTS.CHROME_CHATGPT },
+    { name = "CURSOR_THINK",    weight = CONFIG.WEIGHTS.CURSOR_THINK },
+    { name = "SPOTLIGHT",       weight = CONFIG.WEIGHTS.SPOTLIGHT },
+    { name = "IDLE_PAUSE",      weight = CONFIG.WEIGHTS.IDLE_PAUSE },
+  }
+
+  for _, action in ipairs(actions) do
+    cumulative = cumulative + action.weight
+    if roll <= cumulative then
+      return action.name
     end
-    hs.timer.usleep(delay)
-    hs.eventtap.keyStrokes(char)
+  end
 
-    -- Less frequent pauses for more consistent activity
-    if math.random() > 0.95 and i < #text then
-      hs.timer.usleep(math.random(150000, 300000)) -- Shorter pauses
-    end
+  return "VSCODE_READ" -- Default fallback
+end
+
+-- Human-like delay
+local function humanDelay()
+  return randomFloat(CONFIG.MIN_READ_TIME, CONFIG.MAX_READ_TIME)
+end
+
+-- Short delay for quick actions
+local function shortDelay()
+  return randomFloat(0.3, 1.0)
+end
+
+-- Thinking delay
+local function thinkDelay()
+  return randomFloat(CONFIG.THINK_PAUSE_MIN, CONFIG.THINK_PAUSE_MAX)
+end
+
+-- Cancel all timers safely
+local function cancelTimers()
+  if State.stepTimer then
+    State.stepTimer:stop()
+    State.stepTimer = nil
+  end
+  if State.typeTimer then
+    State.typeTimer:stop()
+    State.typeTimer = nil
   end
 end
 
--- Function to add comment in code
-local function addCodeComment()
-  if isPausedByUser then return end
+-- =============================================================================
+-- APP MANAGEMENT
+-- =============================================================================
 
-  local comment = codeComments[math.random(1, #codeComments)]
-
-  -- Mark simulation time before keyboard actions
-  lastSimulationTime = nowMs()
-
-  -- Go to end of current line and add new line
-  hs.eventtap.keyStroke({ "cmd" }, "right")
-  hs.timer.usleep(30000) -- Faster
-  hs.eventtap.keyStroke({}, "return")
-  hs.timer.usleep(50000) -- Faster
-
-  -- Type the comment faster (counts as more keystrokes)
-  for i = 1, #comment do
-    if isPausedByUser then return end
-    local char = comment:sub(i, i)
-    hs.eventtap.keyStrokes(char)
-    hs.timer.usleep(math.random(20000, 40000)) -- Faster typing
-  end
-
-  -- Quick undo using Cmd+Z (faster revert)
-  hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-    if isPausedByUser then return end
-    lastSimulationTime = nowMs()
-
-    -- Use Cmd+Z to undo - this works with editor's undo system
-    hs.eventtap.keyStroke({ "cmd" }, "z")
-    hs.timer.usleep(50000)
-    -- Undo again to remove the newline
-    hs.eventtap.keyStroke({ "cmd" }, "z")
-
-    -- Add scrolling after undo (simulates reading the code)
-    hs.timer.doAfter(0.2, function()
-      local scrollAmount = math.random(-20, -5)
-      hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
-
-      -- Always scroll back for clean revert
-      hs.timer.doAfter(AUTO_REVERT_DELAY, function()
-        hs.eventtap.scrollWheel({ 0, -scrollAmount }, {}, "pixel")
-      end)
-    end)
-  end)
-end
-
-
-
---------------------------------------------------
--- SEQUENTIAL FLOW FUNCTIONS
---------------------------------------------------
-
--- Forward declarations
-local executeStep1, executeStep2, executeStep3, executeStep4, executeStep5
-
--- Step 1: Add comments in VS Code for 5 seconds, then undo
-executeStep1 = function()
-  print("📝 Step 1: Adding comments in VS Code...")
-  lastSimulationTime = nowMs()
-
-  local vscode = hs.application.find("Code") or hs.application.find("Visual Studio Code")
-  if vscode then
-    vscode:activate()
-    hs.timer.usleep(500000)
-
-    -- Add 2-3 comments over 5 seconds
-    local commentCount = math.random(2, 3)
-    for i = 1, commentCount do
-      local timer = hs.timer.doAfter((i - 1) * 2, function()
-        if not isPausedByUser then
-          addCodeComment()
-        end
-      end)
-      table.insert(activeTimers, timer)
-    end
-
-    -- Move to next step after duration
-    local nextStepTimer = hs.timer.doAfter(STEP_DELAYS.COMMENT_DURATION, function()
-      if isPausedByUser then return end
-      currentStep = 2
-      stepStartTime = os.time()
-      executeStep2()
-    end)
-    table.insert(activeTimers, nextStepTimer)
+-- Focus VS Code
+local function focusVSCode()
+  local app = hs.application.get(CONFIG.VSCODE_BUNDLE)
+  if app then
+    app:activate()
+    return true
   else
-    -- Skip to next step if VS Code not found
-    local skipTimer = hs.timer.doAfter(0.1, function()
-      currentStep = 2
-      stepStartTime = os.time()
-      executeStep2()
-    end)
-    table.insert(activeTimers, skipTimer)
+    -- Try to launch VS Code
+    hs.application.launchOrFocusByBundleID(CONFIG.VSCODE_BUNDLE)
+    hs.timer.usleep(500000) -- Wait 500ms
+    return hs.application.get(CONFIG.VSCODE_BUNDLE) ~= nil
   end
 end
 
--- Step 2: Wait 5s, then move cursor/resize windows for 5-7s (no typing)
-executeStep2 = function()
-  print("⏳ Step 2: Waiting, then cursor movements...")
-  lastSimulationTime = nowMs()
+-- Focus Chrome
+local function focusChrome()
+  local app = hs.application.get(CONFIG.CHROME_BUNDLE)
+  if app then
+    app:activate()
+    return true
+  else
+    hs.application.launchOrFocusByBundleID(CONFIG.CHROME_BUNDLE)
+    hs.timer.usleep(500000)
+    return hs.application.get(CONFIG.CHROME_BUNDLE) ~= nil
+  end
+end
 
-  -- Wait 5 seconds
-  local waitTimer = hs.timer.doAfter(STEP_DELAYS.WAIT_BEFORE_CURSOR, function()
-    if isPausedByUser then return end
-    lastSimulationTime = nowMs()
+-- =============================================================================
+-- KEYBOARD & MOUSE SIMULATION
+-- =============================================================================
 
-    -- Perform cursor movements and window resizing for configured duration
-    local duration = STEP_DELAYS.CURSOR_DURATION
-    local actionCount = math.random(3, 5)
+-- Type a single key with modifiers
+local function pressKey(key, modifiers)
+  modifiers = modifiers or {}
+  hs.eventtap.keyStroke(modifiers, key, 50000) -- 50ms delay
+end
 
-    for i = 1, actionCount do
-      local actionTimer = hs.timer.doAfter((i - 1) * (duration / actionCount), function()
-        if isPausedByUser then return end
+-- Type a string character by character with human-like delays
+local function typeString(str, callback)
+  local chars = {}
+  for i = 1, #str do
+    table.insert(chars, str:sub(i, i))
+  end
 
-        local actionType = math.random(1, 3)
-        if actionType == 1 then
-          -- Smooth cursor movement
-          lastSimulationTime = nowMs()
-          local start = hs.mouse.absolutePosition()
-          local target = {
-            x = start.x + math.random(-200, 200),
-            y = start.y + math.random(-100, 100)
-          }
+  local index = 1
+  State.undoCount = #chars -- Track for undo
 
-          local steps = 10
-          for j = 1, steps do
-            hs.timer.doAfter(0.03 * j, function()
-              if isPausedByUser then return end
-              lastSimulationTime = nowMs()
-              hs.mouse.absolutePosition({
-                x = start.x + (target.x - start.x) * (j / steps),
-                y = start.y + (target.y - start.y) * (j / steps)
-              })
-            end)
-          end
-        elseif actionType == 2 then
-          -- Window resize
-          lastSimulationTime = nowMs()
-          local win = hs.window.focusedWindow()
-          if win then
-            local f = win:frame()
-            local originalFrame = hs.geometry.copy(f)
-            f.w = math.max(400, f.w + math.random(-80, 80))
-            f.h = math.max(300, f.h + math.random(-60, 60))
-            win:setFrame(f, 0.3)
-
-            hs.timer.doAfter(1.5, function()
-              if isPausedByUser then return end
-              if win and win:isVisible() then
-                win:setFrame(originalFrame, 0.3)
-              end
-            end)
-          end
-        else
-          -- Scroll
-          lastSimulationTime = nowMs()
-          local scrollAmount = math.random(-25, -10)
-          hs.eventtap.scrollWheel({ 0, scrollAmount }, {}, "pixel")
-          hs.timer.doAfter(1, function()
-            if isPausedByUser then return end
-            hs.eventtap.scrollWheel({ 0, -scrollAmount }, {}, "pixel")
-          end)
-        end
-      end)
-      table.insert(activeTimers, actionTimer)
+  local function typeNext()
+    if not State.running then
+      if callback then callback() end
+      return
     end
 
-    -- Move to step 3 after duration
-    local nextStepTimer = hs.timer.doAfter(duration, function()
-      if isPausedByUser then return end
-      currentStep = 3
-      stepStartTime = os.time()
-      executeStep3()
+    if index <= #chars then
+      local char = chars[index]
+      hs.eventtap.keyStrokes(char)
+      index = index + 1
+
+      local delay = randomFloat(CONFIG.MIN_TYPE_DELAY, CONFIG.MAX_TYPE_DELAY)
+      State.typeTimer = hs.timer.doAfter(delay, typeNext)
+    else
+      if callback then callback() end
+    end
+  end
+
+  typeNext()
+end
+
+-- Undo typed text (Cmd+Z multiple times)
+local function undoTyping(count, callback)
+  local remaining = count or State.undoCount
+
+  local function undoNext()
+    if not State.running then
+      if callback then callback() end
+      return
+    end
+
+    if remaining > 0 then
+      pressKey("z", { "cmd" })
+      remaining = remaining - 1
+      State.typeTimer = hs.timer.doAfter(0.05, undoNext)
+    else
+      State.undoCount = 0
+      if callback then callback() end
+    end
+  end
+
+  undoNext()
+end
+
+-- Move cursor with arrow keys
+local function moveCursor(direction, times)
+  times = times or 1
+  for _ = 1, times do
+    pressKey(direction)
+    hs.timer.usleep(30000) -- 30ms between moves
+  end
+end
+
+-- Simulate mouse movement (subtle jitter)
+local function jitterMouse()
+  local pos = hs.mouse.absolutePosition()
+  local jitterX = randomInt(-5, 5)
+  local jitterY = randomInt(-3, 3)
+  hs.mouse.absolutePosition({
+    x = pos.x + jitterX,
+    y = pos.y + jitterY
+  })
+end
+
+-- Scroll in current app
+local function scroll(direction, amount)
+  amount = amount or randomInt(2, 5)
+  local delta = direction == "down" and -amount or amount
+  hs.eventtap.scrollWheel({ 0, delta }, {})
+end
+
+-- =============================================================================
+-- SIMULATION ACTIONS
+-- =============================================================================
+
+-- VS Code: Read and move cursor
+local function actionVSCodeRead(callback)
+  logActivity("VS Code: Reading & cursor movement")
+
+  if not focusVSCode() then
+    log("  ✗ Failed to focus VS Code")
+    if callback then callback() end
+    return
+  end
+
+  -- Random cursor movements simulating reading
+  local movements = randomInt(3, 8)
+  local directions = { "down", "up", "right", "left" }
+
+  local function doMovement(remaining)
+    if not State.running or remaining <= 0 then
+      if callback then callback() end
+      return
+    end
+
+    local dir = directions[randomInt(1, #directions)]
+    local times = randomInt(1, 5)
+
+    -- Weighted toward down/right (reading direction)
+    if math.random() < 0.6 then
+      dir = math.random() < 0.7 and "down" or "right"
+    end
+
+    moveCursor(dir, times)
+    jitterMouse()
+
+    local delay = randomFloat(0.3, 1.5)
+    State.stepTimer = hs.timer.doAfter(delay, function()
+      doMovement(remaining - 1)
     end)
-    table.insert(activeTimers, nextStepTimer)
-  end)
-  table.insert(activeTimers, waitTimer)
+  end
+
+  doMovement(movements)
 end
 
--- Step 3: Search in Spotlight or Chrome (Flutter/dev related)
-executeStep3 = function()
-  print("🔍 Step 3: Searching...")
-  lastSimulationTime = nowMs()
+-- VS Code: Switch tabs
+local function actionVSCodeTab(callback)
+  logActivity("VS Code: Switching tabs")
 
-  local searchTimer = hs.timer.doAfter(STEP_DELAYS.SEARCH_DELAY, function()
-    if isPausedByUser then return end
-    lastSimulationTime = nowMs()
+  if not focusVSCode() then
+    log("  ✗ Failed to focus VS Code")
+    if callback then callback() end
+    return
+  end
 
-    local searchType = math.random(1, 2)
+  -- Randomly switch tabs (Ctrl+Tab or Cmd+Shift+[ / ])
+  local tabActions = {
+    function() pressKey("tab", { "ctrl" }) end,
+    function() pressKey("tab", { "ctrl", "shift" }) end,
+    function() pressKey("[", { "cmd", "shift" }) end,
+    function() pressKey("]", { "cmd", "shift" }) end,
+    function() pressKey("1", { "cmd" }) end, -- Go to first tab
+    function() pressKey("2", { "cmd" }) end, -- Go to second tab
+  }
 
-    if searchType == 1 then
-      -- Spotlight search
-      local searchTerms = {
-        "flutter widgets", "dart programming", "vs code", "terminal",
-        "flutter state management", "firebase flutter", "flutter docs"
-      }
+  local action = tabActions[randomInt(1, #tabActions)]
+  action()
 
-      hs.eventtap.keyStroke({ "cmd" }, "space")
-      local spotlightTimer1 = hs.timer.doAfter(0.4, function()
-        if isPausedByUser then return end
-        lastSimulationTime = nowMs()
-        local term = searchTerms[math.random(1, #searchTerms)]
-        simulateTyping(term)
-
-        local spotlightTimer2 = hs.timer.doAfter(1.5, function()
-          if isPausedByUser then return end
-          lastSimulationTime = nowMs()
-          hs.eventtap.keyStroke({}, "escape")
-
-          -- Move to step 4
-          local spotlightTimer3 = hs.timer.doAfter(0.5, function()
-            currentStep = 4
-            executeStep4()
-          end)
-          table.insert(activeTimers, spotlightTimer3)
-        end)
-        table.insert(activeTimers, spotlightTimer2)
-      end)
-      table.insert(activeTimers, spotlightTimer1)
-    else
-      -- Chrome/Browser search
-      local chrome = hs.application.find("Chrome") or hs.application.find("Google Chrome")
-      if chrome then
-        chrome:activate()
-        hs.timer.usleep(500000)
-
-        -- Open new tab and search
-        hs.eventtap.keyStroke({ "cmd" }, "t")
-        local chromeTimer1 = hs.timer.doAfter(0.4, function()
-          if isPausedByUser then return end
-          lastSimulationTime = nowMs()
-          local searches = browserSearches
-          local searchQuery = searches[math.random(1, #searches)]
-          simulateTyping(searchQuery)
-
-          local chromeTimer2 = hs.timer.doAfter(1.5, function()
-            if isPausedByUser then return end
-            lastSimulationTime = nowMs()
-            hs.eventtap.keyStroke({ "cmd" }, "w") -- Close tab
-
-            -- Move to step 4
-            local chromeTimer3 = hs.timer.doAfter(0.3, function()
-              currentStep = 4
-              executeStep4()
-            end)
-            table.insert(activeTimers, chromeTimer3)
-          end)
-          table.insert(activeTimers, chromeTimer2)
-        end)
-        table.insert(activeTimers, chromeTimer1)
-      else
-        -- Skip to step 4 if Chrome not found
-        local skipTimer = hs.timer.doAfter(0.1, function()
-          currentStep = 4
-          executeStep4()
-        end)
-        table.insert(activeTimers, skipTimer)
-      end
+  -- Brief pause then maybe switch again
+  State.stepTimer = hs.timer.doAfter(shortDelay(), function()
+    if State.running and math.random() < 0.4 then
+      tabActions[randomInt(1, #tabActions)]()
     end
+    if callback then callback() end
   end)
-  table.insert(activeTimers, searchTimer)
 end
 
--- Step 4: Change VS Code tabs (files)
-executeStep4 = function()
-  print("📑 Step 4: Changing VS Code tabs...")
-  lastSimulationTime = nowMs()
+-- VS Code: Type Dart code and undo
+local function actionVSCodeType(callback)
+  logActivity("VS Code: Typing Dart code (will undo)")
 
-  local tabTimer = hs.timer.doAfter(STEP_DELAYS.TAB_CHANGE_DELAY, function()
-    if isPausedByUser then return end
-    lastSimulationTime = nowMs()
+  if not focusVSCode() then
+    log("  ✗ Failed to focus VS Code")
+    if callback then callback() end
+    return
+  end
 
-    local vscode = hs.application.find("Code") or hs.application.find("Visual Studio Code")
-    if vscode then
-      vscode:activate()
-      hs.timer.usleep(300000)
+  -- Sample Dart/Flutter code snippets to type
+  local snippets = {
+    "// TODO: Implement feature",
+    "setState(() {});",
+    "final data = await fetch();",
+    "Widget build(BuildContext context) {",
+    "const EdgeInsets.all(16.0),",
+    "print('Debug: $value');",
+    "if (mounted) {",
+    "return Container(",
+    "// FIXME: Handle edge case",
+    "await Future.delayed(Duration(seconds: 1));",
+    "class MyWidget extends StatefulWidget {",
+    "final List<String> items = [];",
+  }
 
-      -- Switch between tabs using Ctrl+Tab
-      local tabSwitches = math.random(2, 4)
-      for i = 1, tabSwitches do
-        local tabTimer = hs.timer.doAfter(i * 0.8, function()
-          if isPausedByUser then return end
-          lastSimulationTime = nowMs()
-          hs.eventtap.keyStroke({ "ctrl" }, "tab")
-        end)
-        table.insert(activeTimers, tabTimer)
-      end
+  local snippet = snippets[randomInt(1, #snippets)]
 
-      -- Move to step 5
-      local nextStepTimer = hs.timer.doAfter(tabSwitches * 0.8 + 0.5, function()
-        if isPausedByUser then return end
-        currentStep = 5
-        executeStep5()
-      end)
-      table.insert(activeTimers, nextStepTimer)
-    else
-      -- Skip to step 5 if VS Code not found
-      local skipTimer = hs.timer.doAfter(0.1, function()
-        currentStep = 5
-        executeStep5()
-      end)
-      table.insert(activeTimers, skipTimer)
+  -- Type the snippet
+  typeString(snippet, function()
+    -- Pause to "look at" what was typed
+    State.stepTimer = hs.timer.doAfter(randomFloat(0.5, 1.5), function()
+      -- Undo everything (never leave permanent changes)
+      undoTyping(#snippet, callback)
+    end)
+  end)
+end
+
+-- VS Code: Search with Cmd+F
+local function actionVSCodeSearch(callback)
+  logActivity("VS Code: Search (Cmd+F)")
+
+  if not focusVSCode() then
+    log("  ✗ Failed to focus VS Code")
+    if callback then callback() end
+    return
+  end
+
+  -- Open search
+  pressKey("f", { "cmd" })
+
+  State.stepTimer = hs.timer.doAfter(0.3, function()
+    if not State.running then
+      pressKey("escape")
+      if callback then callback() end
+      return
     end
-  end)
-  table.insert(activeTimers, tabTimer)
-end
 
--- Step 5: Move cursor or resize window, then loop back
-executeStep5 = function()
-  print("🖱️ Step 5: Final cursor movement...")
-  lastSimulationTime = nowMs()
+    -- Search terms common in Flutter
+    local searchTerms = {
+      "Widget",
+      "setState",
+      "build",
+      "initState",
+      "dispose",
+      "context",
+      "async",
+      "await",
+      "final",
+      "const",
+      "import",
+      "class",
+    }
 
-  local finalTimer = hs.timer.doAfter(STEP_DELAYS.FINAL_CURSOR_DELAY, function()
-    if isPausedByUser then return end
-    lastSimulationTime = nowMs()
+    local term = searchTerms[randomInt(1, #searchTerms)]
 
-    -- Final cursor movement or window action
-    if math.random() > 0.5 then
-      -- Smooth cursor movement
-      local start = hs.mouse.absolutePosition()
-      local target = {
-        x = start.x + math.random(-150, 150),
-        y = start.y + math.random(-80, 80)
-      }
-
-      local steps = 12
-      for i = 1, steps do
-        local cursorTimer = hs.timer.doAfter(0.04 * i, function()
-          if isPausedByUser then return end
-          lastSimulationTime = nowMs()
-          hs.mouse.absolutePosition({
-            x = start.x + (target.x - start.x) * (i / steps),
-            y = start.y + (target.y - start.y) * (i / steps)
-          })
-        end)
-        table.insert(activeTimers, cursorTimer)
-      end
-    else
-      -- Small window adjustment
-      lastSimulationTime = nowMs()
-      local win = hs.window.focusedWindow()
-      if win then
-        local f = win:frame()
-        local originalFrame = hs.geometry.copy(f)
-        f.x = f.x + math.random(-30, 30)
-        f.y = f.y + math.random(-20, 20)
-        win:setFrame(f, 0.2)
-
-        local revertTimer = hs.timer.doAfter(1, function()
-          if win and win:isVisible() then
-            win:setFrame(originalFrame, 0.2)
+    typeString(term, function()
+      -- Navigate through results
+      State.stepTimer = hs.timer.doAfter(shortDelay(), function()
+        if State.running then
+          -- Press Enter to go to next result a few times
+          for _ = 1, randomInt(1, 3) do
+            pressKey("return")
+            hs.timer.usleep(200000)
           end
+        end
+
+        -- Close search
+        State.stepTimer = hs.timer.doAfter(shortDelay(), function()
+          pressKey("escape")
+          if callback then callback() end
         end)
-        table.insert(activeTimers, revertTimer)
-      end
+      end)
+    end)
+  end)
+end
+
+-- VS Code: Terminal interaction
+local function actionVSCodeTerminal(callback)
+  logActivity("VS Code: Terminal (fake command)")
+
+  if not focusVSCode() then
+    log("  ✗ Failed to focus VS Code")
+    if callback then callback() end
+    return
+  end
+
+  -- Toggle terminal (Ctrl+`)
+  pressKey("`", { "ctrl" })
+
+  State.stepTimer = hs.timer.doAfter(0.5, function()
+    if not State.running then
+      pressKey("`", { "ctrl" }) -- Close terminal
+      if callback then callback() end
+      return
     end
 
-    -- Loop back to step 1 after a brief pause - THIS IS THE CONTINUOUS LOOP
-    local loopTimer = hs.timer.doAfter(2, function()
-      if isPausedByUser then
-        print("⏸ Loop cancelled - user is active")
+    -- Fake terminal commands
+    local commands = {
+      "flutter run",
+      "flutter build ios",
+      "dart analyze",
+      "flutter pub get",
+      "flutter test",
+      "flutter clean",
+      "dart fix --apply",
+    }
+
+    local cmd = commands[randomInt(1, #commands)]
+
+    typeString(cmd, function()
+      -- Cancel before executing (Ctrl+C or Escape)
+      State.stepTimer = hs.timer.doAfter(randomFloat(0.3, 0.8), function()
+        pressKey("c", { "ctrl" }) -- Cancel
+
+        -- Clear the line
+        State.stepTimer = hs.timer.doAfter(0.2, function()
+          pressKey("u", { "ctrl" }) -- Clear line
+
+          -- Close terminal
+          State.stepTimer = hs.timer.doAfter(shortDelay(), function()
+            pressKey("`", { "ctrl" })
+            if callback then callback() end
+          end)
+        end)
+      end)
+    end)
+  end)
+end
+
+-- Chrome: ChatGPT tab interaction
+local function actionChromeChatGPT(callback)
+  logActivity("Chrome: Browsing ChatGPT")
+
+  if not focusChrome() then
+    log("  ✗ Failed to focus Chrome")
+    if callback then callback() end
+    return
+  end
+
+  State.stepTimer = hs.timer.doAfter(0.3, function()
+    if not State.running then
+      if callback then callback() end
+      return
+    end
+
+    -- Scroll through the page (reading ChatGPT conversation)
+    local scrollActions = randomInt(3, 7)
+
+    local function doScroll(remaining)
+      if not State.running or remaining <= 0 then
+        if callback then callback() end
         return
       end
-      print("🔁 Looping back to Step 1...")
-      currentStep = 1
-      stepStartTime = os.time()
-      lastSimulationTime = nowMs()
-      executeStep1()
+
+      local direction = math.random() < 0.7 and "down" or "up"
+      scroll(direction, randomInt(2, 6))
+      jitterMouse()
+
+      State.stepTimer = hs.timer.doAfter(randomFloat(0.5, 2.0), function()
+        doScroll(remaining - 1)
+      end)
+    end
+
+    doScroll(scrollActions)
+  end)
+end
+
+-- Cursor-only thinking (just mouse movement)
+local function actionCursorThink(callback)
+  logActivity("Thinking: Mouse movement only")
+
+  local movements = randomInt(5, 12)
+
+  local function doJitter(remaining)
+    if not State.running or remaining <= 0 then
+      if callback then callback() end
+      return
+    end
+
+    -- Larger movements simulating looking around screen
+    local pos = hs.mouse.absolutePosition()
+    local screen = hs.screen.mainScreen():frame()
+
+    local newX = math.max(0, math.min(screen.w, pos.x + randomInt(-50, 50)))
+    local newY = math.max(0, math.min(screen.h, pos.y + randomInt(-30, 30)))
+
+    hs.mouse.absolutePosition({ x = newX, y = newY })
+
+    State.stepTimer = hs.timer.doAfter(randomFloat(0.2, 0.8), function()
+      doJitter(remaining - 1)
     end)
-    table.insert(activeTimers, loopTimer)
-  end)
-  table.insert(activeTimers, finalTimer)
+  end
+
+  doJitter(movements)
 end
 
---------------------------------------------------
--- MAIN ACTIVITY CONTROLLER
---------------------------------------------------
-local function simulateActivity()
-  -- Skip if user is active
-  if isPausedByUser then
-    print("⏸ Skipped - user is active")
+-- Spotlight search (quick open and cancel)
+local function actionSpotlight(callback)
+  logActivity("Spotlight: Quick search")
+
+  -- Open Spotlight
+  pressKey("space", { "cmd" })
+
+  State.stepTimer = hs.timer.doAfter(0.5, function()
+    if not State.running then
+      pressKey("escape")
+      if callback then callback() end
+      return
+    end
+
+    -- Type a search term
+    local searches = {
+      "flutter",
+      "terminal",
+      "vscode",
+      "chrome",
+      "notes",
+    }
+
+    local term = searches[randomInt(1, #searches)]
+
+    typeString(term, function()
+      -- Cancel without opening
+      State.stepTimer = hs.timer.doAfter(randomFloat(0.5, 1.5), function()
+        pressKey("escape")
+        if callback then callback() end
+      end)
+    end)
+  end)
+end
+
+-- Idle pause (just wait)
+local function actionIdlePause(callback)
+  logActivity("Idle: Thinking pause")
+
+  local pauseTime = thinkDelay()
+  jitterMouse()
+  State.stepTimer = hs.timer.doAfter(pauseTime, function()
+    if callback then callback() end
+  end)
+end
+
+-- =============================================================================
+-- MAIN STATE MACHINE
+-- =============================================================================
+
+local function scheduleNextAction()
+  if not State.running then
     return
   end
 
-  -- Mark this as simulated activity FIRST to prevent self-pause
-  lastSimulationTime = nowMs()
+  cancelTimers()
 
-  -- Execute current step in the flow
-  if currentStep == 1 then
-    executeStep1()
-  elseif currentStep == 2 then
-    executeStep2()
-  elseif currentStep == 3 then
-    executeStep3()
-  elseif currentStep == 4 then
-    executeStep4()
-  elseif currentStep == 5 then
-    executeStep5()
-  end
-end -- Close simulateActivity function
-
---------------------------------------------------
--- SCHEDULER (SIMPLIFIED FOR FLOW)
---------------------------------------------------
-local function scheduleNext()
-  -- Just start the flow - it will handle its own timing
-  if currentStep == 1 then
-    simulateActivity()
-  end
-end
-
---------------------------------------------------
--- START / STOP
---------------------------------------------------
-local function startAutomation()
-  -- Don't start if manually stopped by user
-  if isPausedByUser then
-    print("⚠️ Cannot start - manually stopped")
-    return
-  end
-
-  -- Always clean up any existing timers first (prevents leaks)
-  stopAutomation()
-
-  -- Reset to step 1 and start fresh
-  currentStep = 1
-  stepStartTime = os.time()
-  lastSimulationTime = nowMs()
-
-  print("▶️ Automation started")
-  hs.alert.show("▶ Sequential automation started", 1)
-
-  -- Start the first step
-  scheduleNext()
-end
-
-local function stopAutomation()
-  -- Stop old activity timer if exists
-  if activityTimer then
-    activityTimer:stop()
-    activityTimer = nil
-  end
-
-  -- Stop and clear all active timers (prevents leaks)
-  for _, timer in ipairs(activeTimers) do
-    if timer and timer:running() then
-      timer:stop()
+  local action = weightedRandom()
+  local callback = function()
+    -- Add reading/thinking delay between actions
+    if State.running then
+      local delay = humanDelay()
+      log(string.format("  ⏳ Next action in %.1fs", delay))
+      State.stepTimer = hs.timer.doAfter(delay, scheduleNextAction)
     end
   end
-  activeTimers = {}
 
-  -- Note: Don't reset currentStep here to allow inspection
-  -- It will be reset when starting fresh
-end
-
---------------------------------------------------
--- USER INPUT DETECTION
---------------------------------------------------
-local function onUserInput(event)
-  local now = nowMs()
-  local timeSinceLastSim = now - lastSimulationTime
-
-  -- Check if this is likely a simulated event (very recent)
-  if timeSinceLastSim < 500 then
-    return false -- Very recent simulation, likely our own event
-  end
-
-  -- Real user input detected - immediately stop everything
-  if not isPausedByUser then
-    print("⏸ User input detected - pausing automation")
-    isPausedByUser = true
-    stopAutomation()
-  end
-
-  -- Reset the resume timer (always restart the countdown)
-  if resumeTimer then
-    resumeTimer:stop()
-    resumeTimer = nil
-  end
-
-  resumeTimer = hs.timer.doAfter(IDLE_SECONDS, function()
-    print("⏱️ Idle timeout reached - resuming automation")
-    isPausedByUser = false
-    startAutomation()
-    hs.alert.show("▶ Resumed", 0.5)
-  end)
-
-  return false
-end
-
---------------------------------------------------
--- EVENT TAPS
---------------------------------------------------
-local userEventTap = hs.eventtap.new(
-  {
-    hs.eventtap.event.types.mouseMoved,
-    hs.eventtap.event.types.leftMouseDown,
-    hs.eventtap.event.types.rightMouseDown,
-    hs.eventtap.event.types.scrollWheel,
-    hs.eventtap.event.types.keyDown,
-    hs.eventtap.event.types.flagsChanged -- Detect modifier keys
-  },
-  function(event)
-    onUserInput(event)
-    return false -- Don't block the event
-  end
-)
-
-userEventTap:start()
-
---------------------------------------------------
--- MANUAL TOGGLE (HOTKEY)
---------------------------------------------------
-hs.hotkey.bind({ "cmd", "alt", "ctrl" }, "S", function()
-  if isPausedByUser or #activeTimers > 0 then
-    -- Force stop everything
-    print("🛑 Manual stop - automation disabled")
-    isPausedByUser = true
-    stopAutomation()
-
-    -- Cancel any pending resume timer
-    if resumeTimer then
-      resumeTimer:stop()
-      resumeTimer = nil
-    end
-
-    hs.alert.show("⛔ STOPPED", 1.5)
+  -- Execute the selected action
+  if action == "VSCODE_READ" then
+    actionVSCodeRead(callback)
+  elseif action == "VSCODE_TAB" then
+    actionVSCodeTab(callback)
+  elseif action == "VSCODE_TYPE" then
+    actionVSCodeType(callback)
+  elseif action == "VSCODE_SEARCH" then
+    actionVSCodeSearch(callback)
+  elseif action == "VSCODE_TERMINAL" then
+    actionVSCodeTerminal(callback)
+  elseif action == "CHROME_CHATGPT" then
+    actionChromeChatGPT(callback)
+  elseif action == "CURSOR_THINK" then
+    actionCursorThink(callback)
+  elseif action == "SPOTLIGHT" then
+    actionSpotlight(callback)
+  elseif action == "IDLE_PAUSE" then
+    actionIdlePause(callback)
   else
-    -- Start fresh
-    print("▶️ Manual start - automation enabled")
-    isPausedByUser = false
-    startAutomation()
+    -- Fallback to reading
+    actionVSCodeRead(callback)
   end
-end)
+end
 
---------------------------------------------------
--- AUTO START
---------------------------------------------------
-startAutomation()
+-- =============================================================================
+-- START / STOP CONTROLS
+-- =============================================================================
+
+local function startSimulator()
+  if State.running then
+    hs.alert.show("🔄 Simulator already running!", 2)
+    log("Already running - ignoring start request")
+    return
+  end
+
+  State.running = true
+  State.actionCount = 0
+
+  log("========================================")
+  log("🚀 FLUTTER DEV SIMULATOR STARTED")
+  log("========================================")
+  log("Press Cmd+Ctrl+Shift+F to stop")
+  log("")
+
+  hs.alert.show("▶️ Flutter Dev Simulator STARTED\n\nPress Cmd+Ctrl+Shift+F to stop", 3)
+
+  -- Begin the state machine after a short delay
+  State.stepTimer = hs.timer.doAfter(1.0, scheduleNextAction)
+end
+
+local function stopSimulator()
+  if not State.running then
+    hs.alert.show("⚠️ Simulator not running!", 2)
+    log("Not running - ignoring stop request")
+    return
+  end
+
+  State.running = false
+  cancelTimers()
+  State.undoCount = 0
+
+  log("")
+  log("========================================")
+  log("⏹️ FLUTTER DEV SIMULATOR STOPPED")
+  log("Total actions performed: " .. State.actionCount)
+  log("========================================")
+
+  hs.alert.show("⏹️ Flutter Dev Simulator STOPPED\n\nActions: " .. State.actionCount, 3)
+end
+
+local function toggleSimulator()
+  if State.running then
+    stopSimulator()
+  else
+    startSimulator()
+  end
+end
+
+-- =============================================================================
+-- INITIALIZATION
+-- =============================================================================
+
+-- Seed random number generator
+math.randomseed(os.time())
+
+-- Bind hotkey: Cmd+Ctrl+Shift+F
+hs.hotkey.bind({ "cmd", "ctrl", "shift" }, "F", toggleSimulator)
+
+-- Startup notification
+log("========================================")
+log("🎮 FLUTTER DEV SIMULATOR LOADED")
+log("========================================")
+log("Hotkey: Cmd+Ctrl+Shift+F to toggle")
+log("")
+
+hs.alert.show("🎮 Flutter Dev Simulator Ready!\n\nPress Cmd+Ctrl+Shift+F to toggle", 3)
+
+-- =============================================================================
+-- CONSOLE COMMANDS (for debugging)
+-- =============================================================================
+
+-- You can call these from Hammerspoon console:
+-- startFlutterSim()
+-- stopFlutterSim()
+-- toggleFlutterSim()
+
+function startFlutterSim()
+  startSimulator()
+end
+
+function stopFlutterSim()
+  stopSimulator()
+end
+
+function toggleFlutterSim()
+  toggleSimulator()
+end
+
+-- Export for potential module use
+return {
+  start = startSimulator,
+  stop = stopSimulator,
+  toggle = toggleSimulator,
+  config = CONFIG,
+}
