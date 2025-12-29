@@ -10,22 +10,17 @@ math.randomseed(os.time())
 -- CONFIG
 --------------------------------------------------
 local IDLE_SECONDS = 5
-local SELF_EVENT_GRACE_MS = 500                        -- Short grace period to avoid blocking user
-local ENABLE_GLOBAL_UI = true                          -- Mission Control / Spotlight
-local ENABLE_TYPING = true                             -- Keyboard typing in apps
-local AUTO_REVERT_DELAY = 0.8                          -- Fast revert to avoid conflicts (0.8s)
-local ENABLE_AUTO_REVERT = true                        -- Automatically revert actions for humanized behavior
-local PRIORITY_APPS = { "Code", "Visual Studio Code" } -- VS Code is top priority
-local SECONDARY_APPS = { "Chrome", "Google Chrome" }   -- Chrome secondary
+local SELF_EVENT_GRACE_MS = 500 -- Short grace period to avoid blocking user
+local AUTO_REVERT_DELAY = 0.8   -- Fast revert to avoid conflicts (0.8s)
 
 -- SEQUENTIAL FLOW CONFIG
 local STEP_DELAYS = {
-  COMMENT_DURATION = 5,                -- Step 1: Type comments for 5 seconds
-  WAIT_BEFORE_CURSOR = 5,              -- Step 2: Wait 5 seconds before cursor movement
-  CURSOR_DURATION = math.random(5, 7), -- Step 2: Move cursor/resize for 5-7 seconds
-  SEARCH_DELAY = 2,                    -- Step 3: Delay before search
-  TAB_CHANGE_DELAY = 2,                -- Step 4: Delay before tab change
-  FINAL_CURSOR_DELAY = 2,              -- Step 5: Final cursor movement delay
+  COMMENT_DURATION = 5,   -- Step 1: Type comments for 5 seconds
+  WAIT_BEFORE_CURSOR = 5, -- Step 2: Wait 5 seconds before cursor movement
+  CURSOR_DURATION = 6,    -- Step 2: Move cursor/resize for 6 seconds average
+  SEARCH_DELAY = 2,       -- Step 3: Delay before search
+  TAB_CHANGE_DELAY = 2,   -- Step 4: Delay before tab change
+  FINAL_CURSOR_DELAY = 2, -- Step 5: Final cursor movement delay
 }
 
 --------------------------------------------------
@@ -35,13 +30,10 @@ local activityTimer = nil
 local resumeTimer = nil
 local isPausedByUser = false
 local lastSimulationTime = 0
-local actionHistory = {} -- Store history of actions for undo
-local MAX_HISTORY = 10   -- Keep last 10 actions
 
 -- Sequential flow state
 local currentStep = 1
 local stepStartTime = 0
-local isExecutingStep = false
 local activeTimers = {} -- Track all active timers
 
 --------------------------------------------------
@@ -55,44 +47,6 @@ end
 -- TYPING HELPERS
 --------------------------------------------------
 
-
--- Flutter/Dart code snippets (PRIMARY - most common)
-local flutterSnippets = {
-  "class MyWidget extends StatelessWidget {", "Widget build(BuildContext context) {",
-  "return Scaffold(", "setState(() {", "final controller = TextEditingController();",
-  "Navigator.push(context, MaterialPageRoute(", "import 'package:flutter/material.dart';",
-  "Future<void> fetchData() async {", "try { await http.get(",
-  "child: Column(children: [", "onPressed: () {", "const SizedBox(height: ",
-  "Provider.of<", "BlocBuilder<", "GetX<", "StreamBuilder<",
-  "final response = await dio.get(", "ListView.builder(itemBuilder: (context, index) =>",
-  "Container(padding: EdgeInsets.all(", "Text('", "ElevatedButton(",
-  "TextFormField(decoration: InputDecoration(",
-  "final _formKey = GlobalKey<FormState>();", "context.read<",
-  "Navigator.pop(context);", "showDialog(context: context, builder: (context) =>",
-  "FutureBuilder<", "Image.asset('", "Icon(Icons."
-}
-
--- NestJS code snippets (SECONDARY)
-local nestjsSnippets = {
-  "@Controller('", "@Get()", "@Post()", "@Injectable()",
-  "async create(@Body() dto: ", "constructor(private readonly ",
-  "import { Controller, Get, Post } from '@nestjs/common';",
-  "export class AppService {", "@Module({ imports: [",
-  "async findAll(): Promise<", "return this.service.",
-  "@UseGuards(JwtAuthGuard)", "throw new HttpException(",
-  "await this.repository.save(", "@ApiTags('",
-  "implements OnModuleInit {", "private readonly logger = new Logger("
-}
-
--- Mixed code snippets for full-stack dev
-local codeSnippets = {
-  "async function fetchData() {", "const response = await axios.get(",
-  "try { const result = ", "} catch (error) { console.error(",
-  "interface UserDto {", "type ResponseType = {",
-  "export default function", "import { useState } from 'react';",
-  "const [data, setData] = useState(", "useEffect(() => {",
-  "return { statusCode: 200,", "await repository.findOne(",
-}
 
 -- Browser search queries for developers (Flutter-focused)
 local browserSearches = {
@@ -108,77 +62,37 @@ local browserSearches = {
 
 -- Generic code comments for VS Code
 local codeComments = {
-  "// TODO: Refactor this logic",
-  "// FIXME: Handle edge cases",
-  "// NOTE: Review performance here",
-  "// TODO: Add error handling",
-  "// OPTIMIZE: Improve efficiency",
-  "// BUG: Check null values",
-  "// REVIEW: Verify this implementation",
-  "// TODO: Add unit tests",
-  "// NOTE: Consider refactoring",
-  "// FIXME: Update documentation",
-  "// TODO: Implement validation",
-  "// REVIEW: Check for memory leaks",
-  "// NOTE: Optimize for performance",
-  "// TODO: Add logging here",
-  "// FIXME: Handle async properly"
+  "// TODO: Add null safety check",
+  "// FIXME: Handle async state properly",
+  "// TODO: Implement error boundary",
+  "// NOTE: Widget rebuild optimization needed",
+  "// TODO: Add loading state",
+  "// FIXME: Memory leak in stream subscription",
+  "// TODO: Extract reusable widget",
+  "// NOTE: Consider using const constructor",
+  "// TODO: Add input validation",
+  "// FIXME: Dispose controllers properly",
+  "// TODO: Implement state management",
+  "// NOTE: Move to separate file",
+  "// TODO: Add accessibility labels",
+  "// FIXME: Handle navigation back press",
+  "// TODO: Optimize build method",
+  "// NOTE: Consider using ListView.builder",
+  "// TODO: Add error handling for API call",
+  "// FIXME: Update deprecated widget",
+  "// TODO: Implement dependency injection",
+  "// NOTE: Cache network images",
+  "// TODO: Add unit tests for business logic",
+  "// FIXME: Fix widget overflow issue",
+  "// TODO: Implement proper form validation",
+  "// NOTE: Use MediaQuery for responsive layout",
+  "// TODO: Add localization support",
+  "// FIXME: Handle keyboard dismiss",
+  "// TODO: Optimize StatefulWidget lifecycle",
+  "// NOTE: Consider using FutureBuilder",
+  "// TODO: Add permission handling",
+  "// FIXME: Prevent duplicate API calls"
 }
-
---------------------------------------------------
--- UNDO/REVERT FUNCTIONALITY
---------------------------------------------------
-local function addToHistory(actionType, data)
-  table.insert(actionHistory, 1, {
-    type = actionType,
-    data = data,
-    timestamp = os.time()
-  })
-
-  -- Keep history size limited
-  if #actionHistory > MAX_HISTORY then
-    table.remove(actionHistory, #actionHistory)
-  end
-end
-
-local function undoLastAction()
-  if #actionHistory == 0 then
-    hs.alert.show("⚠️ No actions to undo", 1)
-    return
-  end
-
-  local lastAction = table.remove(actionHistory, 1)
-
-  if lastAction.type == "typing" then
-    -- Undo typing by sending Cmd+Z
-    hs.eventtap.keyStroke({ "cmd" }, "z")
-    hs.alert.show("⎌ Undone: " .. lastAction.type, 0.8)
-  elseif lastAction.type == "comment" then
-    -- Undo comment addition
-    hs.eventtap.keyStroke({ "cmd" }, "z")
-    hs.alert.show("⎌ Undone: comment", 0.8)
-  elseif lastAction.type == "window_resize" and lastAction.data then
-    -- Restore previous window frame
-    local win = hs.window.focusedWindow()
-    if win then
-      win:setFrame(lastAction.data.originalFrame, 0.2)
-      hs.alert.show("⎌ Undone: window resize", 0.8)
-    end
-  elseif lastAction.type == "scroll" then
-    -- Reverse scroll
-    if lastAction.data then
-      hs.eventtap.scrollWheel({ 0, -lastAction.data.amount }, {}, "pixel")
-      hs.alert.show("⎌ Undone: scroll", 0.8)
-    end
-  else
-    hs.alert.show("⎌ Undone: " .. lastAction.type, 0.8)
-  end
-end
-
-local function clearHistory()
-  actionHistory = {}
-  hs.alert.show("🗑️ Action history cleared", 1)
-end
 
 --------------------------------------------------
 -- TYPING HELPERS
@@ -208,9 +122,6 @@ local function addCodeComment()
   if isPausedByUser then return end
 
   local comment = codeComments[math.random(1, #codeComments)]
-
-  -- Track this action for undo
-  addToHistory("comment", { text = comment })
 
   -- Mark simulation time before keyboard actions
   lastSimulationTime = nowMs()
@@ -290,11 +201,15 @@ executeStep1 = function()
       stepStartTime = os.time()
       executeStep2()
     end)
+    table.insert(activeTimers, nextStepTimer)
   else
     -- Skip to next step if VS Code not found
-    currentStep = 2
-    stepStartTime = os.time()
-    executeStep2()
+    local skipTimer = hs.timer.doAfter(0.1, function()
+      currentStep = 2
+      stepStartTime = os.time()
+      executeStep2()
+    end)
+    table.insert(activeTimers, skipTimer)
   end
 end
 
@@ -308,8 +223,8 @@ executeStep2 = function()
     if isPausedByUser then return end
     lastSimulationTime = nowMs()
 
-    -- Perform cursor movements and window resizing for 5-7 seconds
-    local duration = math.random(5, 7)
+    -- Perform cursor movements and window resizing for configured duration
+    local duration = STEP_DELAYS.CURSOR_DURATION
     local actionCount = math.random(3, 5)
 
     for i = 1, actionCount do
@@ -400,24 +315,27 @@ executeStep3 = function()
       }
 
       hs.eventtap.keyStroke({ "cmd" }, "space")
-      hs.timer.doAfter(0.4, function()
+      local spotlightTimer1 = hs.timer.doAfter(0.4, function()
         if isPausedByUser then return end
         lastSimulationTime = nowMs()
         local term = searchTerms[math.random(1, #searchTerms)]
         simulateTyping(term)
 
-        hs.timer.doAfter(1.5, function()
+        local spotlightTimer2 = hs.timer.doAfter(1.5, function()
           if isPausedByUser then return end
           lastSimulationTime = nowMs()
           hs.eventtap.keyStroke({}, "escape")
 
           -- Move to step 4
-          hs.timer.doAfter(0.5, function()
+          local spotlightTimer3 = hs.timer.doAfter(0.5, function()
             currentStep = 4
             executeStep4()
           end)
+          table.insert(activeTimers, spotlightTimer3)
         end)
+        table.insert(activeTimers, spotlightTimer2)
       end)
+      table.insert(activeTimers, spotlightTimer1)
     else
       -- Chrome/Browser search
       local chrome = hs.application.find("Chrome") or hs.application.find("Google Chrome")
@@ -427,29 +345,35 @@ executeStep3 = function()
 
         -- Open new tab and search
         hs.eventtap.keyStroke({ "cmd" }, "t")
-        hs.timer.doAfter(0.4, function()
+        local chromeTimer1 = hs.timer.doAfter(0.4, function()
           if isPausedByUser then return end
           lastSimulationTime = nowMs()
           local searches = browserSearches
           local searchQuery = searches[math.random(1, #searches)]
           simulateTyping(searchQuery)
 
-          hs.timer.doAfter(1.5, function()
+          local chromeTimer2 = hs.timer.doAfter(1.5, function()
             if isPausedByUser then return end
             lastSimulationTime = nowMs()
             hs.eventtap.keyStroke({ "cmd" }, "w") -- Close tab
 
             -- Move to step 4
-            hs.timer.doAfter(0.3, function()
+            local chromeTimer3 = hs.timer.doAfter(0.3, function()
               currentStep = 4
               executeStep4()
             end)
+            table.insert(activeTimers, chromeTimer3)
           end)
+          table.insert(activeTimers, chromeTimer2)
         end)
+        table.insert(activeTimers, chromeTimer1)
       else
         -- Skip to step 4 if Chrome not found
-        currentStep = 4
-        executeStep4()
+        local skipTimer = hs.timer.doAfter(0.1, function()
+          currentStep = 4
+          executeStep4()
+        end)
+        table.insert(activeTimers, skipTimer)
       end
     end
   end)
@@ -473,23 +397,28 @@ executeStep4 = function()
       -- Switch between tabs using Ctrl+Tab
       local tabSwitches = math.random(2, 4)
       for i = 1, tabSwitches do
-        hs.timer.doAfter(i * 0.8, function()
+        local tabTimer = hs.timer.doAfter(i * 0.8, function()
           if isPausedByUser then return end
           lastSimulationTime = nowMs()
           hs.eventtap.keyStroke({ "ctrl" }, "tab")
         end)
+        table.insert(activeTimers, tabTimer)
       end
 
       -- Move to step 5
-      hs.timer.doAfter(tabSwitches * 0.8 + 0.5, function()
+      local nextStepTimer = hs.timer.doAfter(tabSwitches * 0.8 + 0.5, function()
         if isPausedByUser then return end
         currentStep = 5
         executeStep5()
       end)
+      table.insert(activeTimers, nextStepTimer)
     else
       -- Skip to step 5 if VS Code not found
-      currentStep = 5
-      executeStep5()
+      local skipTimer = hs.timer.doAfter(0.1, function()
+        currentStep = 5
+        executeStep5()
+      end)
+      table.insert(activeTimers, skipTimer)
     end
   end)
   table.insert(activeTimers, tabTimer)
@@ -515,7 +444,7 @@ executeStep5 = function()
 
       local steps = 12
       for i = 1, steps do
-        hs.timer.doAfter(0.04 * i, function()
+        local cursorTimer = hs.timer.doAfter(0.04 * i, function()
           if isPausedByUser then return end
           lastSimulationTime = nowMs()
           hs.mouse.absolutePosition({
@@ -523,6 +452,7 @@ executeStep5 = function()
             y = start.y + (target.y - start.y) * (i / steps)
           })
         end)
+        table.insert(activeTimers, cursorTimer)
       end
     else
       -- Small window adjustment
@@ -535,21 +465,28 @@ executeStep5 = function()
         f.y = f.y + math.random(-20, 20)
         win:setFrame(f, 0.2)
 
-        hs.timer.doAfter(1, function()
+        local revertTimer = hs.timer.doAfter(1, function()
           if win and win:isVisible() then
             win:setFrame(originalFrame, 0.2)
           end
         end)
+        table.insert(activeTimers, revertTimer)
       end
     end
 
-    -- Loop back to step 1 after a brief pause
-    hs.timer.doAfter(2, function()
-      if isPausedByUser then return end
+    -- Loop back to step 1 after a brief pause - THIS IS THE CONTINUOUS LOOP
+    local loopTimer = hs.timer.doAfter(2, function()
+      if isPausedByUser then
+        print("⏸ Loop cancelled - user is active")
+        return
+      end
+      print("🔁 Looping back to Step 1...")
       currentStep = 1
       stepStartTime = os.time()
+      lastSimulationTime = nowMs()
       executeStep1()
     end)
+    table.insert(activeTimers, loopTimer)
   end)
   table.insert(activeTimers, finalTimer)
 end
@@ -595,39 +532,44 @@ end
 -- START / STOP
 --------------------------------------------------
 local function startAutomation()
-  -- Don't start if already paused or running
+  -- Don't start if manually stopped by user
   if isPausedByUser then
     print("⚠️ Cannot start - manually stopped")
     return
   end
-  if #activeTimers > 0 then
-    print("⚠️ Already running")
-    return
-  end
 
+  -- Always clean up any existing timers first (prevents leaks)
+  stopAutomation()
+
+  -- Reset to step 1 and start fresh
   currentStep = 1
   stepStartTime = os.time()
-  scheduleNext()
-  hs.alert.show("▶ Sequential automation started", 1)
+  lastSimulationTime = nowMs()
+
   print("▶️ Automation started")
+  hs.alert.show("▶ Sequential automation started", 1)
+
+  -- Start the first step
+  scheduleNext()
 end
 
 local function stopAutomation()
+  -- Stop old activity timer if exists
   if activityTimer then
     activityTimer:stop()
     activityTimer = nil
   end
 
-  -- Stop all active timers
+  -- Stop and clear all active timers (prevents leaks)
   for _, timer in ipairs(activeTimers) do
-    if timer then
+    if timer and timer:running() then
       timer:stop()
     end
   end
   activeTimers = {}
 
-  currentStep = 1
-  print("⏹ All automation stopped")
+  -- Note: Don't reset currentStep here to allow inspection
+  -- It will be reset when starting fresh
 end
 
 --------------------------------------------------
@@ -644,18 +586,22 @@ local function onUserInput(event)
 
   -- Real user input detected - immediately stop everything
   if not isPausedByUser then
+    print("⏸ User input detected - pausing automation")
     isPausedByUser = true
     stopAutomation()
-    print("⏸ User input detected - pausing automation")
-    -- No alert to avoid disruption
   end
 
-  -- Reset the resume timer
-  if resumeTimer then resumeTimer:stop() end
+  -- Reset the resume timer (always restart the countdown)
+  if resumeTimer then
+    resumeTimer:stop()
+    resumeTimer = nil
+  end
+
   resumeTimer = hs.timer.doAfter(IDLE_SECONDS, function()
+    print("⏱️ Idle timeout reached - resuming automation")
     isPausedByUser = false
     startAutomation()
-    hs.alert.show("▶ Resumed automation", 0.5)
+    hs.alert.show("▶ Resumed", 0.5)
   end)
 
   return false
@@ -687,48 +633,22 @@ userEventTap:start()
 hs.hotkey.bind({ "cmd", "alt", "ctrl" }, "S", function()
   if isPausedByUser or #activeTimers > 0 then
     -- Force stop everything
+    print("🛑 Manual stop - automation disabled")
     isPausedByUser = true
     stopAutomation()
+
+    -- Cancel any pending resume timer
     if resumeTimer then
       resumeTimer:stop()
       resumeTimer = nil
     end
-    hs.alert.show("⛔ Automation STOPPED", 1.5)
-    print("🛑 Manual stop - automation disabled")
+
+    hs.alert.show("⛔ STOPPED", 1.5)
   else
-    -- Reset and start
+    -- Start fresh
+    print("▶️ Manual start - automation enabled")
     isPausedByUser = false
     startAutomation()
-  end
-end)
-
---------------------------------------------------
--- UNDO HOTKEY (Cmd+Shift+Z)
---------------------------------------------------
-hs.hotkey.bind({ "cmd", "shift" }, "Z", function()
-  undoLastAction()
-end)
-
---------------------------------------------------
--- CLEAR HISTORY HOTKEY (Cmd+Alt+Shift+C)
---------------------------------------------------
-hs.hotkey.bind({ "cmd", "alt", "shift" }, "C", function()
-  clearHistory()
-end)
-
---------------------------------------------------
--- SHOW HISTORY HOTKEY (Cmd+Alt+Shift+H)
---------------------------------------------------
-hs.hotkey.bind({ "cmd", "alt", "shift" }, "H", function()
-  if #actionHistory == 0 then
-    hs.alert.show("📋 No actions in history", 1.5)
-  else
-    local historyText = "📋 Last " .. #actionHistory .. " actions:\n"
-    for i, action in ipairs(actionHistory) do
-      historyText = historyText .. i .. ". " .. action.type .. "\n"
-      if i >= 5 then break end -- Show only first 5
-    end
-    hs.alert.show(historyText, 3)
   end
 end)
 
