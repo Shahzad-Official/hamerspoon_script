@@ -35,15 +35,17 @@ local CONFIG = {
 
   -- State machine weights (probability out of 100)
   WEIGHTS = {
-    VSCODE_READ = 25,    -- VS Code reading + cursor
-    VSCODE_TAB = 15,     -- VS Code tab switching
-    VSCODE_TYPE = 15,    -- Dart typing + undo
-    VSCODE_SEARCH = 10,  -- VS Code search
-    VSCODE_TERMINAL = 5, -- VS Code terminal
-    CHROME_CHATGPT = 15, -- Chrome ChatGPT
-    CURSOR_THINK = 7,    -- Cursor-only thinking
-    SPOTLIGHT = 3,       -- Spotlight/OS actions
-    IDLE_PAUSE = 5,      -- Random idle pause
+    VSCODE_READ = 20,        -- VS Code reading + cursor
+    VSCODE_TAB = 12,         -- VS Code tab switching
+    VSCODE_TYPE = 15,        -- Dart typing + undo
+    VSCODE_SEARCH = 10,      -- VS Code search
+    VSCODE_TERMINAL = 5,     -- VS Code terminal
+    CHROME_CHATGPT = 10,     -- Chrome ChatGPT scrolling
+    CHROME_CHATGPT_TYPE = 8, -- Chrome ChatGPT typing prompts
+    CHROME_SEARCH = 5,       -- Chrome web search
+    CURSOR_THINK = 7,        -- Cursor-only thinking
+    SPOTLIGHT = 3,           -- Spotlight/OS actions
+    IDLE_PAUSE = 5,          -- Random idle pause
   },
 }
 
@@ -97,15 +99,17 @@ local function weightedRandom()
   local cumulative = 0
 
   local actions = {
-    { name = "VSCODE_READ",     weight = CONFIG.WEIGHTS.VSCODE_READ },
-    { name = "VSCODE_TAB",      weight = CONFIG.WEIGHTS.VSCODE_TAB },
-    { name = "VSCODE_TYPE",     weight = CONFIG.WEIGHTS.VSCODE_TYPE },
-    { name = "VSCODE_SEARCH",   weight = CONFIG.WEIGHTS.VSCODE_SEARCH },
-    { name = "VSCODE_TERMINAL", weight = CONFIG.WEIGHTS.VSCODE_TERMINAL },
-    { name = "CHROME_CHATGPT",  weight = CONFIG.WEIGHTS.CHROME_CHATGPT },
-    { name = "CURSOR_THINK",    weight = CONFIG.WEIGHTS.CURSOR_THINK },
-    { name = "SPOTLIGHT",       weight = CONFIG.WEIGHTS.SPOTLIGHT },
-    { name = "IDLE_PAUSE",      weight = CONFIG.WEIGHTS.IDLE_PAUSE },
+    { name = "VSCODE_READ",         weight = CONFIG.WEIGHTS.VSCODE_READ },
+    { name = "VSCODE_TAB",          weight = CONFIG.WEIGHTS.VSCODE_TAB },
+    { name = "VSCODE_TYPE",         weight = CONFIG.WEIGHTS.VSCODE_TYPE },
+    { name = "VSCODE_SEARCH",       weight = CONFIG.WEIGHTS.VSCODE_SEARCH },
+    { name = "VSCODE_TERMINAL",     weight = CONFIG.WEIGHTS.VSCODE_TERMINAL },
+    { name = "CHROME_CHATGPT",      weight = CONFIG.WEIGHTS.CHROME_CHATGPT },
+    { name = "CHROME_CHATGPT_TYPE", weight = CONFIG.WEIGHTS.CHROME_CHATGPT_TYPE },
+    { name = "CHROME_SEARCH",       weight = CONFIG.WEIGHTS.CHROME_SEARCH },
+    { name = "CURSOR_THINK",        weight = CONFIG.WEIGHTS.CURSOR_THINK },
+    { name = "SPOTLIGHT",           weight = CONFIG.WEIGHTS.SPOTLIGHT },
+    { name = "IDLE_PAUSE",          weight = CONFIG.WEIGHTS.IDLE_PAUSE },
   }
 
   for _, action in ipairs(actions) do
@@ -493,9 +497,9 @@ local function actionVSCodeTerminal(callback)
   end)
 end
 
--- Chrome: ChatGPT tab interaction
+-- Chrome: ChatGPT tab interaction (scrolling/reading)
 local function actionChromeChatGPT(callback)
-  logActivity("Chrome: Browsing ChatGPT")
+  logActivity("Chrome ChatGPT: Reading responses")
 
   if not focusChrome() then
     log("  ✗ Failed to focus Chrome")
@@ -528,6 +532,109 @@ local function actionChromeChatGPT(callback)
     end
 
     doScroll(scrollActions)
+  end)
+end
+
+-- Chrome: ChatGPT typing prompt
+local function actionChromeChatGPTType(callback)
+  logActivity("Chrome ChatGPT: Typing prompt")
+
+  if not focusChrome() then
+    log("  ✗ Failed to focus Chrome")
+    if callback then callback() end
+    return
+  end
+
+  State.stepTimer = hs.timer.doAfter(0.3, function()
+    if not State.running then
+      if callback then callback() end
+      return
+    end
+
+    -- Flutter/Dart related prompts for ChatGPT
+    local prompts = {
+      "How do I implement a custom painter in Flutter?",
+      "What's the best way to handle state in Flutter?",
+      "Explain Flutter widget lifecycle methods",
+      "How to optimize Flutter app performance?",
+      "Show me how to use Provider pattern in Flutter",
+      "What's the difference between StatefulWidget and StatelessWidget?",
+      "How to handle async operations in Flutter?",
+      "Best practices for Flutter folder structure",
+      "How do I create custom animations in Flutter?",
+      "Explain Flutter's build context",
+    }
+
+    local prompt = prompts[randomInt(1, #prompts)]
+
+    -- Click in the text area (simulate clicking at bottom of screen where input is)
+    local screen = hs.screen.mainScreen():frame()
+    hs.mouse.absolutePosition({ x = screen.w / 2, y = screen.h - 150 })
+    hs.eventtap.leftClick(hs.mouse.absolutePosition())
+
+    State.stepTimer = hs.timer.doAfter(0.3, function()
+      if not State.running then
+        if callback then callback() end
+        return
+      end
+
+      -- Type the prompt
+      typeString(prompt, function()
+        -- Pause to review what was typed
+        State.stepTimer = hs.timer.doAfter(randomFloat(0.8, 2.0), function()
+          -- Select all and delete (Cmd+A, Delete) - don't actually send
+          pressKey("a", { "cmd" })
+          State.stepTimer = hs.timer.doAfter(0.2, function()
+            pressKey("delete")
+            if callback then callback() end
+          end)
+        end)
+      end)
+    end)
+  end)
+end
+
+-- Chrome: Web search
+local function actionChromeSearch(callback)
+  logActivity("Chrome: Web search")
+
+  if not focusChrome() then
+    log("  ✗ Failed to focus Chrome")
+    if callback then callback() end
+    return
+  end
+
+  -- Focus address bar (Cmd+L)
+  pressKey("l", { "cmd" })
+
+  State.stepTimer = hs.timer.doAfter(0.4, function()
+    if not State.running then
+      pressKey("escape")
+      if callback then callback() end
+      return
+    end
+
+    -- Flutter/development related searches
+    local searches = {
+      "flutter documentation",
+      "dart language guide",
+      "flutter packages",
+      "flutter error handling",
+      "flutter best practices",
+      "dart async await",
+      "flutter widget catalog",
+      "flutter state management",
+    }
+
+    local search = searches[randomInt(1, #searches)]
+
+    typeString(search, function()
+      -- Pause then cancel (don't actually search)
+      State.stepTimer = hs.timer.doAfter(randomFloat(0.5, 1.5), function()
+        pressKey("escape")
+        if callback then callback() end
+      end)
+    end)
   end)
 end
 
@@ -640,6 +747,10 @@ local function scheduleNextAction()
     actionVSCodeTerminal(callback)
   elseif action == "CHROME_CHATGPT" then
     actionChromeChatGPT(callback)
+  elseif action == "CHROME_CHATGPT_TYPE" then
+    actionChromeChatGPTType(callback)
+  elseif action == "CHROME_SEARCH" then
+    actionChromeSearch(callback)
   elseif action == "CURSOR_THINK" then
     actionCursorThink(callback)
   elseif action == "SPOTLIGHT" then
