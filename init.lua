@@ -35,17 +35,11 @@ local CONFIG = {
 
   -- State machine weights (probability out of 100)
   WEIGHTS = {
-    VSCODE_READ = 20,        -- VS Code reading + cursor
-    VSCODE_TAB = 12,         -- VS Code tab switching
-    VSCODE_TYPE = 15,        -- Dart typing + undo
-    VSCODE_SEARCH = 10,      -- VS Code search
-    VSCODE_TERMINAL = 5,     -- VS Code terminal
-    CHROME_CHATGPT = 10,     -- Chrome ChatGPT scrolling
-    CHROME_CHATGPT_TYPE = 8, -- Chrome ChatGPT typing prompts
-    CHROME_SEARCH = 5,       -- Chrome web search
-    CURSOR_THINK = 7,        -- Cursor-only thinking
-    SPOTLIGHT = 3,           -- Spotlight/OS actions
-    IDLE_PAUSE = 5,          -- Random idle pause
+    VSCODE_READ = 40,    -- VS Code reading + cursor
+    VSCODE_TAB = 25,     -- VS Code tab switching
+    CHROME_CHATGPT = 20, -- Chrome ChatGPT scrolling
+    CURSOR_THINK = 10,   -- Cursor-only thinking
+    IDLE_PAUSE = 5,      -- Random idle pause
   },
 }
 
@@ -99,17 +93,11 @@ local function weightedRandom()
   local cumulative = 0
 
   local actions = {
-    { name = "VSCODE_READ",         weight = CONFIG.WEIGHTS.VSCODE_READ },
-    { name = "VSCODE_TAB",          weight = CONFIG.WEIGHTS.VSCODE_TAB },
-    { name = "VSCODE_TYPE",         weight = CONFIG.WEIGHTS.VSCODE_TYPE },
-    { name = "VSCODE_SEARCH",       weight = CONFIG.WEIGHTS.VSCODE_SEARCH },
-    { name = "VSCODE_TERMINAL",     weight = CONFIG.WEIGHTS.VSCODE_TERMINAL },
-    { name = "CHROME_CHATGPT",      weight = CONFIG.WEIGHTS.CHROME_CHATGPT },
-    { name = "CHROME_CHATGPT_TYPE", weight = CONFIG.WEIGHTS.CHROME_CHATGPT_TYPE },
-    { name = "CHROME_SEARCH",       weight = CONFIG.WEIGHTS.CHROME_SEARCH },
-    { name = "CURSOR_THINK",        weight = CONFIG.WEIGHTS.CURSOR_THINK },
-    { name = "SPOTLIGHT",           weight = CONFIG.WEIGHTS.SPOTLIGHT },
-    { name = "IDLE_PAUSE",          weight = CONFIG.WEIGHTS.IDLE_PAUSE },
+    { name = "VSCODE_READ",    weight = CONFIG.WEIGHTS.VSCODE_READ },
+    { name = "VSCODE_TAB",     weight = CONFIG.WEIGHTS.VSCODE_TAB },
+    { name = "CHROME_CHATGPT", weight = CONFIG.WEIGHTS.CHROME_CHATGPT },
+    { name = "CURSOR_THINK",   weight = CONFIG.WEIGHTS.CURSOR_THINK },
+    { name = "IDLE_PAUSE",     weight = CONFIG.WEIGHTS.IDLE_PAUSE },
   }
 
   for _, action in ipairs(actions) do
@@ -285,39 +273,95 @@ local function actionVSCodeRead(callback)
     return
   end
 
-  -- Random cursor movements simulating reading
-  local movements = randomInt(3, 8)
-  local directions = { "down", "up", "right", "left" }
+  -- Primary cursor movements simulating reading code line by line
+  local actions = randomInt(8, 18)
 
-  local function doMovement(remaining)
+  local function doAction(remaining)
     if not State.running or remaining <= 0 then
       if callback then callback() end
       return
     end
 
-    local dir = directions[randomInt(1, #directions)]
-    local times = randomInt(1, 5)
+    -- 90% cursor movement, 10% occasional scroll
+    if math.random() < 0.9 then
+      -- Cursor movement - reading code line by line
+      local movementTypes = {
+        -- Line by line reading (most common)
+        function()
+          local lines = randomInt(1, 3)
+          moveCursor("down", lines)
+          log(string.format("  ↓ Reading %d line(s) down", lines))
+        end,
+        -- Jump across lines (scanning)
+        function()
+          local lines = randomInt(4, 8)
+          moveCursor("down", lines)
+          log("  ⇣ Jumping down through code")
+        end,
+        -- Scroll back up (re-reading)
+        function()
+          local lines = randomInt(1, 4)
+          moveCursor("up", lines)
+          log("  ↑ Re-reading previous lines")
+        end,
+        -- Move across line (reading code horizontally)
+        function()
+          local chars = randomInt(3, 12)
+          moveCursor("right", chars)
+          log("  → Reading across line")
+        end,
+        -- Jump to start of line
+        function()
+          pressKey("a", { "ctrl" })
+          log("  ⇤ Jump to line start")
+        end,
+        -- Jump to end of line
+        function()
+          pressKey("e", { "ctrl" })
+          log("  ⇥ Jump to line end")
+        end,
+        -- Word-by-word navigation
+        function()
+          local words = randomInt(1, 4)
+          for _ = 1, words do
+            pressKey("right", { "alt" })
+            hs.timer.usleep(50000)
+          end
+          log(string.format("  ⇨ Jump %d word(s)", words))
+        end,
+      }
 
-    -- Weighted toward down/right (reading direction)
-    if math.random() < 0.6 then
-      dir = math.random() < 0.7 and "down" or "right"
+      -- Weight: 60% line reading, 40% other movements
+      local choice
+      if math.random() < 0.6 then
+        choice = movementTypes[1] -- Line by line reading
+      else
+        choice = movementTypes[randomInt(1, #movementTypes)]
+      end
+
+      choice()
+    else
+      -- Occasional slow scroll (rarely used in code reading)
+      local direction = math.random() < 0.8 and "down" or "up"
+      scroll(direction, randomInt(2, 4))
+      log("  🖱 Scroll " .. direction)
     end
 
-    moveCursor(dir, times)
     jitterMouse()
 
-    local delay = randomFloat(0.3, 1.5)
+    -- Slower, more human pace
+    local delay = randomFloat(0.8, 2.5)
     State.stepTimer = hs.timer.doAfter(delay, function()
-      doMovement(remaining - 1)
+      doAction(remaining - 1)
     end)
   end
 
-  doMovement(movements)
+  doAction(actions)
 end
 
 -- VS Code: Switch tabs
 local function actionVSCodeTab(callback)
-  logActivity("VS Code: Switching tabs")
+  logActivity("VS Code: Switching between files")
 
   if not focusVSCode() then
     log("  ✗ Failed to focus VS Code")
@@ -325,26 +369,46 @@ local function actionVSCodeTab(callback)
     return
   end
 
-  -- Randomly switch tabs (Ctrl+Tab or Cmd+Shift+[ / ])
-  local tabActions = {
-    function() pressKey("tab", { "ctrl" }) end,
-    function() pressKey("tab", { "ctrl", "shift" }) end,
-    function() pressKey("[", { "cmd", "shift" }) end,
-    function() pressKey("]", { "cmd", "shift" }) end,
-    function() pressKey("1", { "cmd" }) end, -- Go to first tab
-    function() pressKey("2", { "cmd" }) end, -- Go to second tab
-  }
+  -- Switch tabs multiple times (like looking for something)
+  local switches = randomInt(2, 5)
 
-  local action = tabActions[randomInt(1, #tabActions)]
-  action()
-
-  -- Brief pause then maybe switch again
-  State.stepTimer = hs.timer.doAfter(shortDelay(), function()
-    if State.running and math.random() < 0.4 then
-      tabActions[randomInt(1, #tabActions)]()
+  local function doSwitch(remaining)
+    if not State.running or remaining <= 0 then
+      if callback then callback() end
+      return
     end
-    if callback then callback() end
-  end)
+
+    -- Randomly switch tabs (Ctrl+Tab or Cmd+Shift+[ / ])
+    local tabActions = {
+      function()
+        pressKey("tab", { "ctrl" })
+        log("  → Next tab (Ctrl+Tab)")
+      end,
+      function()
+        pressKey("tab", { "ctrl", "shift" })
+        log("  → Previous tab (Ctrl+Shift+Tab)")
+      end,
+      function()
+        pressKey("[", { "cmd", "shift" })
+        log("  → Previous file (Cmd+Shift+[)")
+      end,
+      function()
+        pressKey("]", { "cmd", "shift" })
+        log("  → Next file (Cmd+Shift+])")
+      end,
+    }
+
+    local action = tabActions[randomInt(1, #tabActions)]
+    action()
+
+    -- Pause to "look at" the new file
+    local delay = randomFloat(2.0, 4.5)
+    State.stepTimer = hs.timer.doAfter(delay, function()
+      doSwitch(remaining - 1)
+    end)
+  end
+
+  doSwitch(switches)
 end
 
 -- VS Code: Type Dart code and undo
@@ -526,7 +590,7 @@ local function actionChromeChatGPT(callback)
       scroll(direction, randomInt(2, 6))
       jitterMouse()
 
-      State.stepTimer = hs.timer.doAfter(randomFloat(0.5, 2.0), function()
+      State.stepTimer = hs.timer.doAfter(randomFloat(1.0, 2.5), function()
         doScroll(remaining - 1)
       end)
     end
@@ -581,12 +645,49 @@ local function actionChromeChatGPTType(callback)
       -- Type the prompt
       typeString(prompt, function()
         -- Pause to review what was typed
-        State.stepTimer = hs.timer.doAfter(randomFloat(0.8, 2.0), function()
-          -- Select all and delete (Cmd+A, Delete) - don't actually send
-          pressKey("a", { "cmd" })
-          State.stepTimer = hs.timer.doAfter(0.2, function()
-            pressKey("delete")
+        State.stepTimer = hs.timer.doAfter(randomFloat(0.5, 1.2), function()
+          if not State.running then
             if callback then callback() end
+            return
+          end
+
+          -- Submit the prompt (press Enter)
+          pressKey("return")
+          log("  ✓ Submitted ChatGPT prompt")
+
+          -- Wait for response (simulate ChatGPT thinking/responding)
+          local waitTime = randomFloat(3.0, 8.0)
+          log(string.format("  ⏳ Waiting %.1fs for ChatGPT response...", waitTime))
+
+          State.stepTimer = hs.timer.doAfter(waitTime, function()
+            if not State.running then
+              if callback then callback() end
+              return
+            end
+
+            log("  📖 Reading ChatGPT response...")
+
+            -- Scroll through the response like reading it
+            local scrollActions = randomInt(4, 10)
+
+            local function doScroll(remaining)
+              if not State.running or remaining <= 0 then
+                if callback then callback() end
+                return
+              end
+
+              -- Mostly scroll down (reading), occasionally up (re-reading)
+              local direction = math.random() < 0.85 and "down" or "up"
+              scroll(direction, randomInt(2, 5))
+              jitterMouse()
+
+              local delay = randomFloat(1.5, 3.5)
+              State.stepTimer = hs.timer.doAfter(delay, function()
+                doScroll(remaining - 1)
+              end)
+            end
+
+            doScroll(scrollActions)
           end)
         end)
       end)
@@ -739,22 +840,10 @@ local function scheduleNextAction()
     actionVSCodeRead(callback)
   elseif action == "VSCODE_TAB" then
     actionVSCodeTab(callback)
-  elseif action == "VSCODE_TYPE" then
-    actionVSCodeType(callback)
-  elseif action == "VSCODE_SEARCH" then
-    actionVSCodeSearch(callback)
-  elseif action == "VSCODE_TERMINAL" then
-    actionVSCodeTerminal(callback)
   elseif action == "CHROME_CHATGPT" then
     actionChromeChatGPT(callback)
-  elseif action == "CHROME_CHATGPT_TYPE" then
-    actionChromeChatGPTType(callback)
-  elseif action == "CHROME_SEARCH" then
-    actionChromeSearch(callback)
   elseif action == "CURSOR_THINK" then
     actionCursorThink(callback)
-  elseif action == "SPOTLIGHT" then
-    actionSpotlight(callback)
   elseif action == "IDLE_PAUSE" then
     actionIdlePause(callback)
   else
