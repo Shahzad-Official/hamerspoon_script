@@ -4,7 +4,7 @@
 -- luacheck: globals hs
 ---@diagnostic disable: undefined-global
 -- Simulates a real human Flutter developer on macOS
--- Focus: VS Code (Dart/Flutter) and Chrome (ChatGPT)
+-- Focus: VS Code (Dart/Flutter) only
 --
 -- FEATURES:
 -- ✓ Loops forever with finite-state machine
@@ -13,9 +13,8 @@
 -- ✓ Console logging for each activity
 --
 -- ACTIVITY DISTRIBUTION:
--- VS Code read: 40%
+-- VS Code read: 60%
 -- VS Code tab switch: 25%
--- Chrome ChatGPT read: 20%
 -- Cursor-only thinking: 10%
 -- Idle pause: 5%
 -- =============================================================================
@@ -24,19 +23,17 @@
 local CONFIG = {
   -- Timing (in seconds)
   MIN_READ_TIME = 2.0,   -- Minimum reading pause
-  MAX_READ_TIME = 6.0,   -- Maximum reading pause
+  MAX_READ_TIME = 4.0,   -- Maximum reading pause
   THINK_PAUSE_MIN = 1.0, -- Minimum thinking pause
-  THINK_PAUSE_MAX = 4.0, -- Maximum thinking pause
+  THINK_PAUSE_MAX = 3.0, -- Maximum thinking pause
 
   -- Apps
   VSCODE_BUNDLE = "com.microsoft.VSCode",
-  CHROME_BUNDLE = "com.google.Chrome",
 
   -- State machine weights (probability out of 100)
   WEIGHTS = {
-    VSCODE_READ = 40,    -- VS Code reading + cursor
+    VSCODE_READ = 60,    -- VS Code reading + cursor
     VSCODE_TAB = 25,     -- VS Code tab switching
-    CHROME_CHATGPT = 20, -- Chrome ChatGPT scrolling
     CURSOR_THINK = 10,   -- Cursor-only thinking
     IDLE_PAUSE = 5,      -- Random idle pause
   },
@@ -90,11 +87,10 @@ local function weightedRandom()
   local cumulative = 0
 
   local actions = {
-    { name = "VSCODE_READ",    weight = CONFIG.WEIGHTS.VSCODE_READ },
-    { name = "VSCODE_TAB",     weight = CONFIG.WEIGHTS.VSCODE_TAB },
-    { name = "CHROME_CHATGPT", weight = CONFIG.WEIGHTS.CHROME_CHATGPT },
-    { name = "CURSOR_THINK",   weight = CONFIG.WEIGHTS.CURSOR_THINK },
-    { name = "IDLE_PAUSE",     weight = CONFIG.WEIGHTS.IDLE_PAUSE },
+    { name = "VSCODE_READ",  weight = CONFIG.WEIGHTS.VSCODE_READ },
+    { name = "VSCODE_TAB",   weight = CONFIG.WEIGHTS.VSCODE_TAB },
+    { name = "CURSOR_THINK", weight = CONFIG.WEIGHTS.CURSOR_THINK },
+    { name = "IDLE_PAUSE",   weight = CONFIG.WEIGHTS.IDLE_PAUSE },
   }
 
   for _, action in ipairs(actions) do
@@ -140,19 +136,6 @@ local function focusVSCode()
     hs.application.launchOrFocusByBundleID(CONFIG.VSCODE_BUNDLE)
     hs.timer.usleep(500000) -- Wait 500ms
     return hs.application.get(CONFIG.VSCODE_BUNDLE) ~= nil
-  end
-end
-
--- Focus Chrome
-local function focusChrome()
-  local app = hs.application.get(CONFIG.CHROME_BUNDLE)
-  if app then
-    app:activate()
-    return true
-  else
-    hs.application.launchOrFocusByBundleID(CONFIG.CHROME_BUNDLE)
-    hs.timer.usleep(500000)
-    return hs.application.get(CONFIG.CHROME_BUNDLE) ~= nil
   end
 end
 
@@ -341,44 +324,6 @@ local function actionVSCodeTab(callback)
   actionVSCodeFileCycle(callback, "VS Code: Next file cycle")
 end
 
--- Chrome: ChatGPT tab interaction (scrolling/reading)
-local function actionChromeChatGPT(callback)
-  logActivity("Chrome ChatGPT: Reading responses")
-
-  if not focusChrome() then
-    log("  ✗ Failed to focus Chrome")
-    if callback then callback() end
-    return
-  end
-
-  State.stepTimer = hs.timer.doAfter(0.3, function()
-    if not State.running then
-      if callback then callback() end
-      return
-    end
-
-    -- Scroll through the page (reading ChatGPT conversation)
-    local scrollActions = randomInt(3, 7)
-
-    local function doScroll(remaining)
-      if not State.running or remaining <= 0 then
-        if callback then callback() end
-        return
-      end
-
-      local direction = math.random() < 0.7 and "down" or "up"
-      scroll(direction, randomInt(2, 6))
-      jitterMouse()
-
-      State.stepTimer = hs.timer.doAfter(randomFloat(1.0, 2.5), function()
-        doScroll(remaining - 1)
-      end)
-    end
-
-    doScroll(scrollActions)
-  end)
-end
-
 -- Cursor-only thinking (just mouse movement)
 local function actionCursorThink(callback)
   logActivity("Thinking: Mouse movement only")
@@ -445,8 +390,6 @@ local function scheduleNextAction()
     actionVSCodeRead(callback)
   elseif action == "VSCODE_TAB" then
     actionVSCodeTab(callback)
-  elseif action == "CHROME_CHATGPT" then
-    actionChromeChatGPT(callback)
   elseif action == "CURSOR_THINK" then
     actionCursorThink(callback)
   elseif action == "IDLE_PAUSE" then
