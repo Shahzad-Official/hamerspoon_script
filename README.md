@@ -17,8 +17,8 @@ A human-like activity simulator for macOS using [Hammerspoon](https://www.hammer
   - **Rapid scroll bursts (1%)**: Quick scrolling sequences
 
 - **Intelligent Pause/Resume**: Automatically pauses when you use your Mac and resumes after 5 seconds of inactivity
-- **High-Frequency Actions**: Performs activities every 2-5 seconds for sustained 50-70% activity levels
-- **Manual Toggle**: Stop/start automation with `Cmd+Alt+Ctrl+S`
+- **High-Frequency Actions**: Uses short gaps between keyboard, scroll, and mouse events for sustained activity
+- **Manual Toggle**: Stop/start automation with `Cmd+Ctrl+Shift+F`
 
 ## Prerequisites
 
@@ -102,19 +102,20 @@ open -g "hammerspoon://reload"
 You can customize the behavior by editing the CONFIG section in [init.lua](init.lua):
 
 ```lua
-local IDLE_SECONDS = 5          -- Time to wait before resuming after user activity
-local ENABLE_GLOBAL_UI = true   -- Enable Mission Control/Spotlight actions
-local ENABLE_TYPING = true      -- Enable keyboard typing in applications
-local MIN_INTERVAL = 2          -- Minimum seconds between actions (lower = more activity)
-local MAX_INTERVAL = 5          -- Maximum seconds between actions (lower = more activity)
+MIN_READ_TIME = 0.35            -- Gap between normal actions
+MAX_READ_TIME = 0.75
+READ_STEP_MIN = 0.35            -- Gap between read/scroll bursts
+READ_STEP_MAX = 0.85
+MOUSE_STEP_MIN = 0.12            -- Gap between mouse movements
+MOUSE_STEP_MAX = 0.35
+SCROLLS_BEFORE_TYPING = 3        -- Scroll ticks before keyboard activity begins
 ```
 
 **To adjust activity levels:**
 
-- **Higher activity (60-80%)**: Set `MIN_INTERVAL = 1` and `MAX_INTERVAL = 3`
-- **Current activity (50-70%)**: Use defaults `MIN_INTERVAL = 2` and `MAX_INTERVAL = 5`
-- **Lower activity (20-40%)**: Set `MIN_INTERVAL = 6` and `MAX_INTERVAL = 12`
-- **Disable typing**: Set `ENABLE_TYPING = false` to prevent keyboard input simulation
+- **Higher activity (approximately 60-75%)**: Keep the current defaults, especially the short `READ_STEP_*` and `MOUSE_STEP_*` gaps
+- **Lower activity**: Increase `MIN_READ_TIME`, `MAX_READ_TIME`, `READ_STEP_MIN`, and `READ_STEP_MAX`
+- **Start keyboard activity sooner**: Lower `SCROLLS_BEFORE_TYPING` (minimum `1`)
 
 ## Usage
 
@@ -124,22 +125,21 @@ The automation starts automatically when Hammerspoon loads the configuration.
 
 ### Manual Control
 
-- **Toggle On/Off**: Press `Cmd+Alt+Ctrl+S` to manually stop or start the automation
+- **Toggle On/Off**: Press `Cmd+Ctrl+Shift+F` to manually stop or start the automation
 - **Reload Config**: Use the Hammerspoon menu bar icon → "Reload Config"
 
 ### How It Works
 
-1. The script schedules random activities at high frequency (every 2-5 seconds)
-2. Actions include typing, scrolling, app switching, and system interactions
-3. When you interact with your Mac (mouse, keyboard, scroll), it automatically pauses
-4. After 5 seconds of inactivity, it automatically resumes
-5. All simulated events have a grace period to avoid triggering the pause mechanism
-6. Typing occurs in compatible apps: Code, TextEdit, Notes, Terminal, Safari, Chrome, Slack, Mail
+1. The script schedules random activities with sub-second gaps between input bursts
+2. Actions include typing, scrolling, app switching, and mouse movement in VS Code
+3. The typing phase starts after the configured number of scroll ticks
+4. Explicit mouse-move events are posted so cursor movement is observable by activity monitors
+5. At the deadline, keyboard events stop and higher-frequency scroll/mouse activity continues
 
 ### Timed Type/Delete Loop
 
 When the simulator is started, a 4-minute-50-second monotonic timer begins immediately. After
-6 scroll ticks, it rapidly types a random lowercase letter or number and removes it with
+3 scroll ticks, it rapidly types a random lowercase letter or number and removes it with
 Backspace in alternating events. At the exact deadline, all keyboard events are blocked and the
 simulator continues with scroll and mouse movement actions only.
 
@@ -152,26 +152,22 @@ simulator continues with scroll and mouse movement actions only.
 
 **Getting rate-limited or detected?**
 
-- Increase `MIN_INTERVAL` and `MAX_INTERVAL` for less frequent activity
-- Disable `ENABLE_GLOBAL_UI` if Mission Control/Spotlight actions are too noticeable
-- Disable `ENABLE_TYPING` if keyboard simulation is interfering with your work
+- Increase the timing values in the CONFIG section for less frequent activity
+- Increase `SCROLLS_BEFORE_TYPING` if keyboard simulation should start later
 
 **Typing appears in wrong applications?**
 
 - The script only types in compatible apps (editors, browsers, terminals)
-- If it interferes, set `ENABLE_TYPING = false` in the CONFIG section
-- You can customize the app list in the typing section of the script
+- Increase `SCROLLS_BEFORE_TYPING` or set `TYPE_DELETE_MIN`/`TYPE_DELETE_MAX` lower in the CONFIG section
 
 **Activity too high/intrusive?**
 
-- Reduce frequency: Set `MIN_INTERVAL = 6` and `MAX_INTERVAL = 12`
-- Disable features: Set `ENABLE_TYPING = false` or `ENABLE_GLOBAL_UI = false`
-- The script will automatically pause when you're actively working
+- Increase `MIN_READ_TIME`, `MAX_READ_TIME`, `READ_STEP_*`, and `MOUSE_STEP_*`
+- Increase `SCROLLS_BEFORE_TYPING` to delay keyboard simulation
 
 **Want to disable completely?**
 
-- Press `Cmd+Alt+Ctrl+S` to stop
-- Or comment out the `startAutomation()` call at the end of the script
+- Press `Cmd+Ctrl+Shift+F` to stop
 
 ## License
 
