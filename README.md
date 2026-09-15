@@ -136,6 +136,13 @@ The automation starts automatically when Hammerspoon loads the configuration.
 5. All simulated events have a grace period to avoid triggering the pause mechanism
 6. Typing occurs in compatible apps: Code, TextEdit, Notes, Terminal, Safari, Chrome, Slack, Mail
 
+### Timed Type/Delete Loop
+
+When the simulator is started, a 4-minute-50-second monotonic timer begins immediately. After
+6 scroll ticks, it rapidly types a random lowercase letter or number and removes it with
+Backspace in alternating events. At the exact deadline, all keyboard events are blocked and the
+simulator continues with scroll and mouse movement actions only.
+
 ## Troubleshooting
 
 **Script not running?**
