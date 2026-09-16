@@ -102,18 +102,18 @@ open -g "hammerspoon://reload"
 You can customize the behavior by editing the CONFIG section in [init.lua](init.lua):
 
 ```lua
-MIN_READ_TIME = 0.35            -- Gap between normal actions
-MAX_READ_TIME = 0.75
-READ_STEP_MIN = 0.35            -- Gap between read/scroll bursts
-READ_STEP_MAX = 0.85
-MOUSE_STEP_MIN = 0.12            -- Gap between mouse movements
-MOUSE_STEP_MAX = 0.35
+MIN_READ_TIME = 1.00            -- Gap between normal actions
+MAX_READ_TIME = 1.80
+READ_STEP_MIN = 1.00            -- Gap between read/scroll bursts
+READ_STEP_MAX = 1.80
+MOUSE_STEP_MIN = 0.45            -- Gap between mouse movements
+MOUSE_STEP_MAX = 0.90
 SCROLLS_BEFORE_TYPING = 3        -- Scroll ticks before keyboard activity begins
 ```
 
 **To adjust activity levels:**
 
-- **Higher activity (approximately 60-75%)**: Keep the current defaults, especially the short `READ_STEP_*` and `MOUSE_STEP_*` gaps
+- **Higher activity (approximately 70-85%)**: Keep the current defaults, especially the `READ_STEP_*` and `MOUSE_STEP_*` gaps
 - **Lower activity**: Increase `MIN_READ_TIME`, `MAX_READ_TIME`, `READ_STEP_MIN`, and `READ_STEP_MAX`
 - **Start keyboard activity sooner**: Lower `SCROLLS_BEFORE_TYPING` (minimum `1`)
 

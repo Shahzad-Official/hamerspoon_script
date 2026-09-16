@@ -23,22 +23,22 @@
 local CONFIG = {
   -- Timing (in seconds)
   -- Keep the gaps short enough for a sustained medium/high activity level.
-  MIN_READ_TIME = 0.35,
-  MAX_READ_TIME = 0.75,
-  THINK_PAUSE_MIN = 0.25,
-  THINK_PAUSE_MAX = 0.60,
-  READ_STEP_MIN = 0.35,
-  READ_STEP_MAX = 0.85,
-  MOUSE_STEP_MIN = 0.12,
-  MOUSE_STEP_MAX = 0.35,
-  POST_ACTION_MIN = 0.30,
-  POST_ACTION_MAX = 0.70,
+  MIN_READ_TIME = 1.00,
+  MAX_READ_TIME = 1.80,
+  THINK_PAUSE_MIN = 0.80,
+  THINK_PAUSE_MAX = 1.40,
+  READ_STEP_MIN = 1.00,
+  READ_STEP_MAX = 1.80,
+  MOUSE_STEP_MIN = 0.45,
+  MOUSE_STEP_MAX = 0.90,
+  POST_ACTION_MIN = 0.90,
+  POST_ACTION_MAX = 1.50,
 
   -- Typing phase
   TYPING_WINDOW_SECONDS = 4 * 60 + 50, -- Typing ends exactly 4:50 after start
   SCROLLS_BEFORE_TYPING = 3,           -- Reach the active input phase quickly
-  TYPE_DELETE_MIN = 12,
-  TYPE_DELETE_MAX = 24,
+  TYPE_DELETE_MIN = 8,
+  TYPE_DELETE_MAX = 16,
 
   -- Apps
   VSCODE_BUNDLE = "com.microsoft.VSCode",
@@ -241,7 +241,6 @@ local function postMouseMove(point)
     hs.eventtap.event.types.mouseMoved,
     point
   ):post()
-  hs.mouse.absolutePosition(point)
 end
 
 local function jitterMouse()
@@ -267,7 +266,7 @@ local function naturalScrollBurst(direction, ticksMin, ticksMax)
   local ticks = randomInt(ticksMin or 2, ticksMax or 4)
   for _ = 1, ticks do
     scroll(direction, randomInt(1, 2))
-    hs.timer.usleep(randomInt(80000, 160000))
+    hs.timer.usleep(randomInt(180000, 320000))
   end
   return ticks
 end
@@ -277,7 +276,7 @@ local function lineByLineRead(direction, minLines, maxLines)
   local lines = randomInt(minLines or 2, maxLines or 5)
   for _ = 1, lines do
     pressKey(direction)
-    hs.timer.usleep(randomInt(100000, 220000))
+    hs.timer.usleep(randomInt(180000, 360000))
   end
   return lines
 end
@@ -285,7 +284,7 @@ end
 -- Switch to next open editor tab in VS Code
 local function switchToNextVSCodeTab()
   pressKey("]", { "cmd", "shift" })
-  hs.timer.usleep(randomInt(180000, 400000))
+  hs.timer.usleep(randomInt(300000, 600000))
 end
 
 -- =============================================================================
@@ -356,9 +355,9 @@ local function actionVSCodeFileCycle(callback, label)
     if remaining <= 0 then
       -- Anchor to bottom before reverse pass, then scroll back up naturally.
       pressKey("down", { "cmd" })
-      hs.timer.usleep(randomInt(180000, 400000))
+      hs.timer.usleep(randomInt(300000, 600000))
       log("  ↓ Reached file bottom, starting reverse read")
-      State.stepTimer = hs.timer.doAfter(randomFloat(0.35, 0.75), function()
+      State.stepTimer = hs.timer.doAfter(randomFloat(0.75, 1.30), function()
         doUp(upBursts)
       end)
       return
@@ -492,7 +491,7 @@ local function actionRandomTypeDelete(callback)
       return
     end
 
-    hs.timer.usleep(randomInt(30000, 90000))
+    hs.timer.usleep(randomInt(70000, 130000))
 
     if not typingWindowOpen() then
       if callback then callback() end
@@ -502,7 +501,7 @@ local function actionRandomTypeDelete(callback)
     pressKey("delete")
     completed = completed + 1
 
-    State.stepTimer = hs.timer.doAfter(randomFloat(0.06, 0.16), nextPair)
+    State.stepTimer = hs.timer.doAfter(randomFloat(0.65, 0.90), nextPair)
   end
 
   nextPair()
@@ -512,10 +511,10 @@ end
 local function actionPostDeadlineScroll(callback)
   logActivity("Post-typing: Scroll only")
 
-  local bursts = randomInt(2, 4)
+  local bursts = randomInt(1, 3)
   for _ = 1, bursts do
-    naturalScrollBurst(math.random() < 0.8 and "down" or "up", 2, 4)
-    hs.timer.usleep(randomInt(100000, 220000))
+    naturalScrollBurst(math.random() < 0.8 and "down" or "up", 2, 3)
+    hs.timer.usleep(randomInt(180000, 350000))
   end
   jitterMouse()
 
@@ -527,7 +526,7 @@ end
 local function actionPostDeadlineMouse(callback)
   logActivity("Post-typing: Mouse movement only")
 
-  local movements = randomInt(12, 24)
+  local movements = randomInt(5, 10)
   local function doJitter(remaining)
     if not State.running or remaining <= 0 then
       if callback then callback() end
@@ -561,7 +560,7 @@ local function scheduleNextAction()
     -- Add reading/thinking delay between actions
     if State.running then
       local delay = State.typingActive and not State.typingEnded
-        and randomFloat(0.06, 0.16)
+        and randomFloat(0.65, 0.90)
         or humanDelay()
       log(string.format("  ⏳ Next action in %.1fs", delay))
       State.stepTimer = hs.timer.doAfter(delay, scheduleNextAction)
