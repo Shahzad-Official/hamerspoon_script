@@ -130,7 +130,7 @@ The Hammerspoon configuration loads automatically; start the simulator with `Cmd
 
 1. The schedule repeats every five minutes from the time the simulator is started.
 2. The first 30 seconds of each window are keyboard-free.
-3. A randomly selected 2–3 minute middle phase sends character/delete keystroke pairs.
+3. A randomly selected 2–3 minute middle phase runs an exclusive character/delete loop; no scrolling, mouse movement, tab switching, or navigation keys are sent during it.
 4. The rest of the window is keyboard-free; short scrolling/mouse bursts continue with quiet gaps.
 5. Explicit mouse-move events are posted so cursor movement is observable by activity monitors.
 
@@ -139,7 +139,8 @@ The Hammerspoon configuration loads automatically; start the simulator with `Cmd
 Each five-minute window gets a fresh random typing duration between
 `TYPING_PHASE_MIN_SECONDS` and `TYPING_PHASE_MAX_SECONDS`. During that phase it types a random
 lowercase letter or number and removes it with `delete` in alternating events. `pressKey()` checks
-the phase boundary before every key event, so keystrokes stop even if a burst reaches a boundary.
+the phase boundary before every key event, and a pending character is deleted immediately if the
+phase closes during the short type/delete pause.
 
 ## Troubleshooting
 

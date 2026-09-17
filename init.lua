@@ -68,6 +68,7 @@ local State = {
   typingPhaseStartAt = nil,
   typingPhaseEndAt = nil,
   typingPhaseDuration = nil,
+  typingFocusWindowIndex = -1,
   scrollCount = 0,
   typingActive = false,
 }
@@ -241,11 +242,16 @@ end
 -- KEYBOARD & MOUSE SIMULATION
 -- =============================================================================
 
--- Type a single key with modifiers
-local function pressKey(key, modifiers)
+-- Type a single key with modifiers. typingKey is true only for the isolated
+-- type/delete loop; navigation and tab-switch keys are blocked during it.
+local function pressKey(key, modifiers, typingKey)
   -- Keyboard input is allowed only during the active phase of the current
   -- five-minute window.
   if not typingWindowOpen() then
+    return false
+  end
+
+  if not typingKey then
     return false
   end
 
@@ -272,12 +278,18 @@ end
 
 -- Simulate mouse movement (subtle jitter)
 local function postMouseMove(point)
+  -- Do not let a keyboard-phase action leak mouse events into the editor.
+  if typingWindowOpen() then
+    return false
+  end
+
   -- Warp alone does not reliably create an input event for activity monitors.
   -- Post an explicit mouseMoved event, then keep the cursor position in sync.
   hs.eventtap.event.newMouseEvent(
     hs.eventtap.event.types.mouseMoved,
     point
   ):post()
+  return true
 end
 
 local function jitterMouse()
@@ -292,10 +304,17 @@ end
 
 -- Scroll in current app
 local function scroll(direction, amount)
+  -- The typing phase is intentionally exclusive: no scrolls while a typed
+  -- character is waiting to be removed.
+  if typingWindowOpen() then
+    return false
+  end
+
   amount = amount or randomInt(2, 5)
   local delta = direction == "down" and -amount or amount
   hs.eventtap.scrollWheel({ 0, delta }, {})
   noteScroll()
+  return true
 end
 
 -- Scroll using short bursts with micro-pauses to look more human
@@ -516,6 +535,15 @@ end
 -- rapidly; this is intentionally not a simultaneous key press because the
 -- editor must receive a valid character followed by its removal.
 local function actionRandomTypeDelete(callback)
+  if State.typingFocusWindowIndex ~= State.windowIndex then
+    if not focusVSCode() then
+      log("  ✗ Could not focus VS Code; skipping typing burst")
+      if callback then callback() end
+      return
+    end
+    State.typingFocusWindowIndex = State.windowIndex
+  end
+
   logActivity("Typing: Random characters + immediate removal")
 
   local characters = "abcdefghijklmnopqrstuvwxyz0123456789"
@@ -537,19 +565,29 @@ local function actionRandomTypeDelete(callback)
     local character = string.sub(characters, index, index)
 
     -- Guard both sides of the short pause so neither event crosses the cutoff.
-    if not pressKey(character) then
+    if not pressKey(character, nil, true) then
       if callback then callback() end
       return
     end
 
+    local pendingCharacter = true
     hs.timer.usleep(randomInt(70000, 130000))
 
     if not typingWindowOpen() then
+      -- The character was inserted but the phase closed during the short
+      -- pause. Remove it immediately before any other simulator event can
+      -- occur, even though the normal typing guard is now closed.
+      hs.eventtap.keyStroke({}, "delete", 50000)
+      pendingCharacter = false
+      log("  🧹 Removed pending character at keyboard-phase boundary")
       if callback then callback() end
       return
     end
 
-    pressKey("delete")
+    if not pressKey("delete", nil, true) and pendingCharacter then
+      hs.eventtap.keyStroke({}, "delete", 50000)
+    end
+    pendingCharacter = false
     completed = completed + 1
 
     State.stepTimer = hs.timer.doAfter(randomFloat(0.65, 0.90), nextPair)
@@ -670,6 +708,7 @@ local function startSimulator()
   State.typingPhaseStartAt = nil
   State.typingPhaseEndAt = nil
   State.typingPhaseDuration = nil
+  State.typingFocusWindowIndex = -1
   State.scrollCount = 0
   State.typingActive = false
 
