@@ -104,8 +104,10 @@ NO_TYPING_START_SECONDS = 30     -- Keyboard-free opening
 TYPING_PHASE_MIN_SECONDS = 2 * 60
 TYPING_PHASE_MAX_SECONDS = 3 * 60
 NO_TYPING_END_SECONDS = 30       -- Guaranteed keyboard-free tail
-TYPE_DELETE_MIN = 8               -- Character/delete pairs per typing burst
-TYPE_DELETE_MAX = 16
+TYPING_CYCLE_MIN_SECONDS = 50    -- Save/switch interval inside typing phase
+TYPING_CYCLE_MAX_SECONDS = 60
+TYPE_DELETE_GAP_MIN_SECONDS = 0.65
+TYPE_DELETE_GAP_MAX_SECONDS = 0.90
 ```
 
 **To adjust activity levels:**
@@ -113,7 +115,7 @@ TYPE_DELETE_MAX = 16
 - **Target around 75–85%**: Start with the current defaults and measure one complete 5-minute Cattr interval
 - **If activity is above 85%**: Increase `KEYBOARD_FREE_PAUSE_MIN` and `KEYBOARD_FREE_PAUSE_MAX`
 - **If activity is below 75%**: Decrease the `KEYBOARD_FREE_PAUSE_*` values or increase the typing phase duration
-- **More keyboard activity**: Increase `TYPE_DELETE_MIN` and `TYPE_DELETE_MAX`
+- **More keyboard activity**: Reduce `TYPE_DELETE_GAP_MIN_SECONDS`/`TYPE_DELETE_GAP_MAX_SECONDS`
 
 ## Usage
 
@@ -130,17 +132,17 @@ The Hammerspoon configuration loads automatically; start the simulator with `Cmd
 
 1. The schedule repeats every five minutes from the time the simulator is started.
 2. The first 30 seconds of each window are keyboard-free.
-3. A randomly selected 2–3 minute middle phase runs an exclusive character/delete loop; no scrolling, mouse movement, tab switching, or navigation keys are sent during it.
+3. A randomly selected 2–3 minute middle phase runs an exclusive character/delete loop; no scrolling, mouse movement, or navigation keys are sent during it.
 4. The rest of the window is keyboard-free; short scrolling/mouse bursts continue with quiet gaps.
 5. Explicit mouse-move events are posted so cursor movement is observable by activity monitors.
 
 ### Timed Type/Delete Loop
 
 Each five-minute window gets a fresh random typing duration between
-`TYPING_PHASE_MIN_SECONDS` and `TYPING_PHASE_MAX_SECONDS`. During that phase it types a random
-lowercase letter or number and removes it with `delete` in alternating events. `pressKey()` checks
-the phase boundary before every key event, and a pending character is deleted immediately if the
-phase closes during the short type/delete pause.
+`TYPING_PHASE_MIN_SECONDS` and `TYPING_PHASE_MAX_SECONDS`. Within that phase, typing is split into
+50–60 second cycles. Every cycle removes its characters, saves the clean file, switches to the next
+VS Code tab, and resumes typing. `pressKey()` checks the phase boundary before every key event, and
+a pending character is deleted immediately if the phase closes during the short type/delete pause.
 
 ## Troubleshooting
 
@@ -157,7 +159,7 @@ phase closes during the short type/delete pause.
 **Typing appears in wrong applications?**
 
 - The script only types in compatible apps (editors, browsers, terminals)
-- Set `TYPE_DELETE_MIN`/`TYPE_DELETE_MAX` lower in the CONFIG section
+- Increase `TYPE_DELETE_GAP_MIN_SECONDS`/`TYPE_DELETE_GAP_MAX_SECONDS` in the CONFIG section
 
 **Activity too high/intrusive?**
 

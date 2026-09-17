@@ -40,8 +40,10 @@ local CONFIG = {
   TYPING_PHASE_MIN_SECONDS = 2 * 60,
   TYPING_PHASE_MAX_SECONDS = 3 * 60,
   NO_TYPING_END_SECONDS = 30,          -- Keep this much time keyboard-free at the end
-  TYPE_DELETE_MIN = 8,
-  TYPE_DELETE_MAX = 16,
+  TYPING_CYCLE_MIN_SECONDS = 50,
+  TYPING_CYCLE_MAX_SECONDS = 60,
+  TYPE_DELETE_GAP_MIN_SECONDS = 0.65,
+  TYPE_DELETE_GAP_MAX_SECONDS = 0.90,
 
   -- Apps
   VSCODE_BUNDLE = "com.microsoft.VSCode",
@@ -69,6 +71,8 @@ local State = {
   typingPhaseEndAt = nil,
   typingPhaseDuration = nil,
   typingFocusWindowIndex = -1,
+  typingCycleEndAt = nil,
+  typingCycleIndex = 0,
   scrollCount = 0,
   typingActive = false,
 }
@@ -142,6 +146,8 @@ local function updateTypingPhase()
       + (windowIndex * CONFIG.ACTIVITY_WINDOW_SECONDS)
       + CONFIG.NO_TYPING_START_SECONDS
     State.typingPhaseEndAt = State.typingPhaseStartAt + State.typingPhaseDuration
+    State.typingCycleEndAt = nil
+    State.typingCycleIndex = 0
 
     log(string.format(
       "🕔 Five-minute window #%d: keyboard phase %.0f–%.0fs",
@@ -531,9 +537,9 @@ local function actionIdlePause(callback)
   end)
 end
 
--- Type and immediately remove short random strings. The two events alternate
--- rapidly; this is intentionally not a simultaneous key press because the
--- editor must receive a valid character followed by its removal.
+-- Type and immediately remove random strings for one 50–60 second cycle.
+-- The cycle boundary saves the clean file and switches tabs before typing
+-- resumes on the next file.
 local function actionRandomTypeDelete(callback)
   if State.typingFocusWindowIndex ~= State.windowIndex then
     if not focusVSCode() then
@@ -547,17 +553,51 @@ local function actionRandomTypeDelete(callback)
   logActivity("Typing: Random characters + immediate removal")
 
   local characters = "abcdefghijklmnopqrstuvwxyz0123456789"
-  local rounds = randomInt(CONFIG.TYPE_DELETE_MIN, CONFIG.TYPE_DELETE_MAX)
-  local completed = 0
+  local now = monotonicSeconds()
+  if not State.typingCycleEndAt or now >= State.typingCycleEndAt then
+    State.typingCycleIndex = State.typingCycleIndex + 1
+    State.typingCycleEndAt = now + randomFloat(
+      CONFIG.TYPING_CYCLE_MIN_SECONDS,
+      CONFIG.TYPING_CYCLE_MAX_SECONDS
+    )
+    log(string.format(
+      "  🔁 Typing cycle #%d: %ds–%ds before save + tab switch",
+      State.typingCycleIndex,
+      CONFIG.TYPING_CYCLE_MIN_SECONDS,
+      CONFIG.TYPING_CYCLE_MAX_SECONDS
+    ))
+  end
 
-  local function nextPair()
-    if not State.running or not State.typingActive or completed >= rounds then
+  local function finishTypingCycle()
+    if not State.running or not typingWindowOpen() then
       if callback then callback() end
       return
     end
 
-    if not typingWindowOpen() then
+    log("  💾 Typing cycle complete; saving clean file")
+    pressKey("s", { "cmd" }, true)
+    hs.timer.usleep(randomInt(350000, 600000))
+
+    if typingWindowOpen() then
+      log("  ⇥ Switching to next VS Code tab")
+      pressKey("]", { "cmd", "shift" }, true)
+      hs.timer.usleep(randomInt(450000, 750000))
+    end
+
+    State.typingCycleEndAt = nil
+    if callback then callback() end
+  end
+
+  local function nextPair()
+    if not State.running or not typingWindowOpen() then
       if callback then callback() end
+      return
+    end
+
+    -- Leave a small margin for the type/delete pair before the cycle
+    -- transition, so the boundary never leaves a character behind.
+    if State.typingCycleEndAt - monotonicSeconds() <= 0.25 then
+      finishTypingCycle()
       return
     end
 
@@ -588,9 +628,15 @@ local function actionRandomTypeDelete(callback)
       hs.eventtap.keyStroke({}, "delete", 50000)
     end
     pendingCharacter = false
-    completed = completed + 1
 
-    State.stepTimer = hs.timer.doAfter(randomFloat(0.65, 0.90), nextPair)
+    if State.typingCycleEndAt - monotonicSeconds() <= 0.25 then
+      finishTypingCycle()
+    else
+      State.stepTimer = hs.timer.doAfter(randomFloat(
+        CONFIG.TYPE_DELETE_GAP_MIN_SECONDS,
+        CONFIG.TYPE_DELETE_GAP_MAX_SECONDS
+      ), nextPair)
+    end
   end
 
   nextPair()
@@ -709,6 +755,8 @@ local function startSimulator()
   State.typingPhaseEndAt = nil
   State.typingPhaseDuration = nil
   State.typingFocusWindowIndex = -1
+  State.typingCycleEndAt = nil
+  State.typingCycleIndex = 0
   State.scrollCount = 0
   State.typingActive = false
 
