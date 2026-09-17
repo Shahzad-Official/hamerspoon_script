@@ -31,12 +31,15 @@ local CONFIG = {
   READ_STEP_MAX = 1.80,
   MOUSE_STEP_MIN = 0.45,
   MOUSE_STEP_MAX = 0.90,
-  POST_ACTION_MIN = 0.90,
-  POST_ACTION_MAX = 1.50,
+  KEYBOARD_FREE_PAUSE_MIN = 2.00,       -- Quiet gap between outer activity bursts
+  KEYBOARD_FREE_PAUSE_MAX = 3.00,
 
-  -- Typing phase
-  TYPING_WINDOW_SECONDS = 4 * 60 + 50, -- Typing ends exactly 4:50 after start
-  SCROLLS_BEFORE_TYPING = 3,           -- Reach the active input phase quickly
+  -- Repeating five-minute keyboard schedule
+  ACTIVITY_WINDOW_SECONDS = 5 * 60,
+  NO_TYPING_START_SECONDS = 30,        -- No keyboard events at window start
+  TYPING_PHASE_MIN_SECONDS = 2 * 60,
+  TYPING_PHASE_MAX_SECONDS = 3 * 60,
+  NO_TYPING_END_SECONDS = 30,          -- Keep this much time keyboard-free at the end
   TYPE_DELETE_MIN = 8,
   TYPE_DELETE_MAX = 16,
 
@@ -59,13 +62,14 @@ local CONFIG = {
 local State = {
   running = false,
   stepTimer = nil,
-  deadlineTimer = nil,
   actionCount = 0,
   startedAt = nil,
-  typingDeadline = nil,
+  windowIndex = -1,
+  typingPhaseStartAt = nil,
+  typingPhaseEndAt = nil,
+  typingPhaseDuration = nil,
   scrollCount = 0,
   typingActive = false,
-  typingEnded = false,
 }
 
 -- =============================================================================
@@ -108,35 +112,66 @@ local function elapsedSinceStart()
   return monotonicSeconds() - State.startedAt
 end
 
--- Forward declarations for functions used by input guards below.
-local scheduleNextAction
-local stopTypingAtDeadline
+-- Refresh the keyboard phase for the current five-minute window. The state
+-- machine calls this before every action, and the input guard calls it before
+-- every key event, so a phase boundary cannot be crossed by a long action.
+local function updateTypingPhase()
+  if not State.running or not State.startedAt then
+    State.typingActive = false
+    return
+  end
 
--- Mark the typing phase complete as soon as the deadline is reached. The
--- event timer provides the normal transition; this check also protects every
--- key event if another action is in progress when the timer fires.
+  local elapsed = elapsedSinceStart()
+  local windowIndex = math.floor(elapsed / CONFIG.ACTIVITY_WINDOW_SECONDS)
+  local windowOffset = elapsed % CONFIG.ACTIVITY_WINDOW_SECONDS
+
+  if windowIndex ~= State.windowIndex then
+    State.windowIndex = windowIndex
+
+    local maxDuration = math.min(
+      CONFIG.TYPING_PHASE_MAX_SECONDS,
+      CONFIG.ACTIVITY_WINDOW_SECONDS
+        - CONFIG.NO_TYPING_START_SECONDS
+        - CONFIG.NO_TYPING_END_SECONDS
+    )
+    local minDuration = math.min(CONFIG.TYPING_PHASE_MIN_SECONDS, maxDuration)
+
+    State.typingPhaseDuration = randomFloat(minDuration, maxDuration)
+    State.typingPhaseStartAt = State.startedAt
+      + (windowIndex * CONFIG.ACTIVITY_WINDOW_SECONDS)
+      + CONFIG.NO_TYPING_START_SECONDS
+    State.typingPhaseEndAt = State.typingPhaseStartAt + State.typingPhaseDuration
+
+    log(string.format(
+      "🕔 Five-minute window #%d: keyboard phase %.0f–%.0fs",
+      windowIndex + 1,
+      CONFIG.NO_TYPING_START_SECONDS,
+      CONFIG.NO_TYPING_START_SECONDS + State.typingPhaseDuration
+    ))
+  end
+
+  local wasActive = State.typingActive
+  State.typingActive = windowOffset >= CONFIG.NO_TYPING_START_SECONDS
+    and windowOffset < (CONFIG.NO_TYPING_START_SECONDS + State.typingPhaseDuration)
+
+  if State.typingActive and not wasActive then
+    log("⌨️ Keyboard phase started")
+  elseif wasActive and not State.typingActive then
+    log("🖱️ Keyboard phase ended; mouse/scroll activity only")
+  end
+end
+
 local function typingWindowOpen()
-  if not State.running or State.typingEnded or not State.typingDeadline then
+  if not State.running then
     return false
   end
 
-  if monotonicSeconds() >= State.typingDeadline then
-    stopTypingAtDeadline()
-    return false
-  end
-
-  return true
+  updateTypingPhase()
+  return State.typingActive
 end
 
 local function noteScroll()
   State.scrollCount = State.scrollCount + 1
-
-  if not State.typingEnded
-      and not State.typingActive
-      and State.scrollCount >= CONFIG.SCROLLS_BEFORE_TYPING then
-    State.typingActive = true
-    log(string.format("⌨️ Typing phase armed after %d scroll ticks", State.scrollCount))
-  end
 end
 
 -- Weighted random selection
@@ -208,14 +243,16 @@ end
 
 -- Type a single key with modifiers
 local function pressKey(key, modifiers)
-  -- Once the 4:50 deadline is reached, all keyboard events are blocked.
+  -- Keyboard input is allowed only during the active phase of the current
+  -- five-minute window.
   if not typingWindowOpen() then
     return false
   end
 
   -- keyStroke's delay is in microseconds. Leave enough time for the full
-  -- key-down/key-up pair to finish before the hard deadline.
-  if State.typingDeadline - monotonicSeconds() <= 0.05 then
+  -- key-down/key-up pair to finish before the phase boundary.
+  if not State.typingPhaseEndAt
+      or State.typingPhaseEndAt - monotonicSeconds() <= 0.05 then
     return false
   end
 
@@ -352,6 +389,13 @@ local function actionVSCodeFileCycle(callback, label)
       return
     end
 
+    updateTypingPhase()
+    if State.typingActive then
+      log("  ⌨️ Keyboard phase started; switching to type/delete loop")
+      if callback then callback() end
+      return
+    end
+
     if remaining <= 0 then
       -- Anchor to bottom before reverse pass, then scroll back up naturally.
       pressKey("down", { "cmd" })
@@ -370,7 +414,7 @@ local function actionVSCodeFileCycle(callback, label)
     log(string.format("  ↓ Natural read down (%d ticks)", ticks))
 
     if State.typingActive then
-      log("  ⌨️ Scroll threshold reached; switching to type/delete loop")
+      log("  ⌨️ Keyboard phase started; switching to type/delete loop")
       if callback then callback() end
       return
     end
@@ -382,6 +426,13 @@ local function actionVSCodeFileCycle(callback, label)
 
   doUp = function(remaining)
     if not State.running then
+      if callback then callback() end
+      return
+    end
+
+    updateTypingPhase()
+    if State.typingActive then
+      log("  ⌨️ Keyboard phase started; switching to type/delete loop")
       if callback then callback() end
       return
     end
@@ -398,7 +449,7 @@ local function actionVSCodeFileCycle(callback, label)
     log(string.format("  ↑ Natural reverse read up (%d ticks)", ticks))
 
     if State.typingActive then
-      log("  ⌨️ Scroll threshold reached; switching to type/delete loop")
+      log("  ⌨️ Keyboard phase started; switching to type/delete loop")
       if callback then callback() end
       return
     end
@@ -472,7 +523,7 @@ local function actionRandomTypeDelete(callback)
   local completed = 0
 
   local function nextPair()
-    if not State.running or State.typingEnded or completed >= rounds then
+    if not State.running or not State.typingActive or completed >= rounds then
       if callback then callback() end
       return
     end
@@ -507,36 +558,59 @@ local function actionRandomTypeDelete(callback)
   nextPair()
 end
 
--- After the typing deadline these are the only actions that can be scheduled.
-local function actionPostDeadlineScroll(callback)
-  logActivity("Post-typing: Scroll only")
-
-  local bursts = randomInt(1, 3)
-  for _ = 1, bursts do
-    naturalScrollBurst(math.random() < 0.8 and "down" or "up", 2, 3)
-    hs.timer.usleep(randomInt(180000, 350000))
-  end
-  jitterMouse()
-
-  if callback then
-    State.stepTimer = hs.timer.doAfter(randomFloat(CONFIG.POST_ACTION_MIN, CONFIG.POST_ACTION_MAX), callback)
-  end
+local function scheduleKeyboardFreePause(callback)
+  local pause = randomFloat(
+    CONFIG.KEYBOARD_FREE_PAUSE_MIN,
+    CONFIG.KEYBOARD_FREE_PAUSE_MAX
+  )
+  log(string.format("  💤 Keyboard-free pause for %.1fs", pause))
+  State.stepTimer = hs.timer.doAfter(pause, callback)
 end
 
-local function actionPostDeadlineMouse(callback)
-  logActivity("Post-typing: Mouse movement only")
+-- Keep the opening and closing parts of every window active without sending
+-- keyboard events. Short bursts plus quiet gaps keep the five-minute average
+-- below a continuously-active 100% pattern.
+local function actionKeyboardFreeScroll(callback)
+  logActivity("Keyboard-free: Scroll + mouse burst")
 
-  local movements = randomInt(5, 10)
+  local ticks = naturalScrollBurst(
+    math.random() < 0.8 and "down" or "up",
+    3,
+    5
+  )
+
+  local movements = randomInt(3, 5)
+  for _ = 1, movements do
+    jitterMouse()
+    hs.timer.usleep(randomInt(250000, 500000))
+  end
+
+  log(string.format("  ↕ Scroll burst: %d tick(s)", ticks))
+
+  scheduleKeyboardFreePause(callback)
+end
+
+local function actionKeyboardFreeMouse(callback)
+  logActivity("Keyboard-free: Mouse movement burst")
+
+  local movements = randomInt(4, 7)
   local function doJitter(remaining)
-    if not State.running or remaining <= 0 then
-      if callback then callback() end
+    if not State.running then
+      return
+    end
+
+    if remaining <= 0 then
+      scheduleKeyboardFreePause(callback)
       return
     end
 
     jitterMouse()
-    State.stepTimer = hs.timer.doAfter(randomFloat(CONFIG.MOUSE_STEP_MIN, CONFIG.MOUSE_STEP_MAX), function()
-      doJitter(remaining - 1)
-    end)
+    State.stepTimer = hs.timer.doAfter(
+      randomFloat(CONFIG.MOUSE_STEP_MIN, CONFIG.MOUSE_STEP_MAX),
+      function()
+        doJitter(remaining - 1)
+      end
+    )
   end
 
   doJitter(movements)
@@ -551,52 +625,30 @@ local function scheduleNextAction()
     return
   end
 
-  -- Catch the deadline even if the timer callback was queued behind another
-  -- short synchronous action.
-  typingWindowOpen()
+  -- Refresh the repeating five-minute phase before choosing the next action.
+  updateTypingPhase()
 
   cancelTimers()
   local callback = function()
-    -- Add reading/thinking delay between actions
+    -- Re-check here because a timer callback can run just after a phase
+    -- boundary.
+    updateTypingPhase()
     if State.running then
-      local delay = State.typingActive and not State.typingEnded
-        and randomFloat(0.65, 0.90)
-        or humanDelay()
-      log(string.format("  ⏳ Next action in %.1fs", delay))
-      State.stepTimer = hs.timer.doAfter(delay, scheduleNextAction)
+      scheduleNextAction()
     end
   end
 
-  if State.typingEnded then
-    if math.random() < 0.6 then
-      actionPostDeadlineScroll(callback)
-    else
-      actionPostDeadlineMouse(callback)
-    end
-    return
-  end
-
-  -- Once the scroll threshold is reached, keep the type/delete loop active
-  -- until the exact deadline.
   if State.typingActive then
     actionRandomTypeDelete(callback)
     return
   end
 
-  local action = weightedRandom()
-
-  -- Execute the selected action
-  if action == "VSCODE_READ" then
-    actionVSCodeRead(callback)
-  elseif action == "VSCODE_TAB" then
-    actionVSCodeTab(callback)
-  elseif action == "CURSOR_THINK" then
-    actionCursorThink(callback)
-  elseif action == "IDLE_PAUSE" then
-    actionIdlePause(callback)
+  -- Outside the typing phase, use only mouse/scroll bursts. No keyboard
+  -- action is scheduled here.
+  if math.random() < 0.6 then
+    actionKeyboardFreeScroll(callback)
   else
-    -- Fallback to reading
-    actionVSCodeRead(callback)
+    actionKeyboardFreeMouse(callback)
   end
 end
 
@@ -614,43 +666,24 @@ local function startSimulator()
   State.running = true
   State.actionCount = 0
   State.startedAt = monotonicSeconds()
-  State.typingDeadline = State.startedAt + CONFIG.TYPING_WINDOW_SECONDS
+  State.windowIndex = -1
+  State.typingPhaseStartAt = nil
+  State.typingPhaseEndAt = nil
+  State.typingPhaseDuration = nil
   State.scrollCount = 0
   State.typingActive = false
-  State.typingEnded = false
 
   log("========================================")
   log("🚀 FLUTTER DEV SIMULATOR STARTED")
   log("========================================")
   log("Press Cmd+Ctrl+Shift+F to stop")
+  log("Keyboard schedule: 30s off → 2–3m on → keyboard-free remainder")
   log("")
 
   hs.alert.show("▶️ Flutter Dev Simulator STARTED\n\nPress Cmd+Ctrl+Shift+F to stop", 3)
 
-  -- This timer starts at the same moment as the simulator state above. The
-  -- input guard in typingWindowOpen() enforces the boundary if this callback
-  -- is delayed while another action is running.
-  State.deadlineTimer = hs.timer.doAfter(CONFIG.TYPING_WINDOW_SECONDS, stopTypingAtDeadline)
-
   -- Begin the state machine after a short delay
   State.stepTimer = hs.timer.doAfter(1.0, scheduleNextAction)
-end
-
-stopTypingAtDeadline = function()
-  if not State.running or State.typingEnded then
-    return
-  end
-
-  State.typingEnded = true
-  State.typingActive = false
-
-  if State.deadlineTimer then
-    State.deadlineTimer:stop()
-    State.deadlineTimer = nil
-  end
-
-  log(string.format("⏱️ Typing stopped at %.3fs (4:50 deadline)", elapsedSinceStart()))
-  hs.alert.show("⌨️ Typing phase complete\n\nScroll and mouse movement only", 3)
 end
 
 local function stopSimulator()
@@ -662,11 +695,6 @@ local function stopSimulator()
 
   State.running = false
   cancelTimers()
-
-  if State.deadlineTimer then
-    State.deadlineTimer:stop()
-    State.deadlineTimer = nil
-  end
 
   log("")
   log("========================================")

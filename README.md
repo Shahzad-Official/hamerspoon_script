@@ -1,23 +1,12 @@
 # Hammerspoon Activity Simulator
 
-A human-like activity simulator for macOS using [Hammerspoon](https://www.hammerspoon.org/). This script simulates realistic user activity to prevent your Mac from going to sleep or appearing idle, while intelligently pausing when you're actually using your computer.
+A human-like activity simulator for macOS using [Hammerspoon](https://www.hammerspoon.org/), with keyboard activity limited to a controlled phase of each five-minute window.
 
 ## Features
 
-- **High-Intensity Activity Simulation**: Performs random actions including:
-
-  - **Keyboard typing in applications (30%)**: Types realistic text in editors, browsers, terminals, Slack, etc.
-  - **Scrolling (25%)**: Vertical and horizontal scrolling with varied speeds
-  - **App switching with Cmd+Tab (20%)**: Switches between applications
-  - **Smooth mouse movements (10%)**: Natural cursor movements
-  - **Mission Control (5%)**: Activates Mission Control view
-  - **Window resizing/moving (4%)**: Adjusts window sizes and positions
-  - **Spotlight search with typing (3%)**: Opens Spotlight and types search queries
-  - **Copy/Paste/Select operations (2%)**: Text selection and clipboard operations
-  - **Rapid scroll bursts (1%)**: Quick scrolling sequences
-
-- **Intelligent Pause/Resume**: Automatically pauses when you use your Mac and resumes after 5 seconds of inactivity
-- **High-Frequency Actions**: Uses short gaps between keyboard, scroll, and mouse events for sustained activity
+- **Repeating five-minute schedule**: Keyboard-free opening, controlled typing middle, and keyboard-free remainder
+- **Keyboard-free activity bursts**: Scrolling and mouse movement continue outside the typing phase
+- **Boundary protection**: Every simulated key event is checked against the active typing phase
 - **Manual Toggle**: Stop/start automation with `Cmd+Ctrl+Shift+F`
 
 ## Prerequisites
@@ -108,20 +97,29 @@ READ_STEP_MIN = 1.00            -- Gap between read/scroll bursts
 READ_STEP_MAX = 1.80
 MOUSE_STEP_MIN = 0.45            -- Gap between mouse movements
 MOUSE_STEP_MAX = 0.90
-SCROLLS_BEFORE_TYPING = 3        -- Scroll ticks before keyboard activity begins
+KEYBOARD_FREE_PAUSE_MIN = 2.00   -- Quiet gap between non-typing bursts
+KEYBOARD_FREE_PAUSE_MAX = 3.00
+ACTIVITY_WINDOW_SECONDS = 5 * 60 -- Repeating five-minute schedule
+NO_TYPING_START_SECONDS = 30     -- Keyboard-free opening
+TYPING_PHASE_MIN_SECONDS = 2 * 60
+TYPING_PHASE_MAX_SECONDS = 3 * 60
+NO_TYPING_END_SECONDS = 30       -- Guaranteed keyboard-free tail
+TYPE_DELETE_MIN = 8               -- Character/delete pairs per typing burst
+TYPE_DELETE_MAX = 16
 ```
 
 **To adjust activity levels:**
 
-- **Higher activity (approximately 70-85%)**: Keep the current defaults, especially the `READ_STEP_*` and `MOUSE_STEP_*` gaps
-- **Lower activity**: Increase `MIN_READ_TIME`, `MAX_READ_TIME`, `READ_STEP_MIN`, and `READ_STEP_MAX`
-- **Start keyboard activity sooner**: Lower `SCROLLS_BEFORE_TYPING` (minimum `1`)
+- **Target around 75–85%**: Start with the current defaults and measure one complete 5-minute Cattr interval
+- **If activity is above 85%**: Increase `KEYBOARD_FREE_PAUSE_MIN` and `KEYBOARD_FREE_PAUSE_MAX`
+- **If activity is below 75%**: Decrease the `KEYBOARD_FREE_PAUSE_*` values or increase the typing phase duration
+- **More keyboard activity**: Increase `TYPE_DELETE_MIN` and `TYPE_DELETE_MAX`
 
 ## Usage
 
 ### Automatic Start
 
-The automation starts automatically when Hammerspoon loads the configuration.
+The Hammerspoon configuration loads automatically; start the simulator with `Cmd+Ctrl+Shift+F`.
 
 ### Manual Control
 
@@ -130,18 +128,18 @@ The automation starts automatically when Hammerspoon loads the configuration.
 
 ### How It Works
 
-1. The script schedules random activities with sub-second gaps between input bursts
-2. Actions include typing, scrolling, app switching, and mouse movement in VS Code
-3. The typing phase starts after the configured number of scroll ticks
-4. Explicit mouse-move events are posted so cursor movement is observable by activity monitors
-5. At the deadline, keyboard events stop and higher-frequency scroll/mouse activity continues
+1. The schedule repeats every five minutes from the time the simulator is started.
+2. The first 30 seconds of each window are keyboard-free.
+3. A randomly selected 2–3 minute middle phase sends character/delete keystroke pairs.
+4. The rest of the window is keyboard-free; short scrolling/mouse bursts continue with quiet gaps.
+5. Explicit mouse-move events are posted so cursor movement is observable by activity monitors.
 
 ### Timed Type/Delete Loop
 
-When the simulator is started, a 4-minute-50-second monotonic timer begins immediately. After
-3 scroll ticks, it rapidly types a random lowercase letter or number and removes it with
-Backspace in alternating events. At the exact deadline, all keyboard events are blocked and the
-simulator continues with scroll and mouse movement actions only.
+Each five-minute window gets a fresh random typing duration between
+`TYPING_PHASE_MIN_SECONDS` and `TYPING_PHASE_MAX_SECONDS`. During that phase it types a random
+lowercase letter or number and removes it with `delete` in alternating events. `pressKey()` checks
+the phase boundary before every key event, so keystrokes stop even if a burst reaches a boundary.
 
 ## Troubleshooting
 
@@ -153,17 +151,17 @@ simulator continues with scroll and mouse movement actions only.
 **Getting rate-limited or detected?**
 
 - Increase the timing values in the CONFIG section for less frequent activity
-- Increase `SCROLLS_BEFORE_TYPING` if keyboard simulation should start later
+- Increase `KEYBOARD_FREE_PAUSE_MIN` and `KEYBOARD_FREE_PAUSE_MAX`
 
 **Typing appears in wrong applications?**
 
 - The script only types in compatible apps (editors, browsers, terminals)
-- Increase `SCROLLS_BEFORE_TYPING` or set `TYPE_DELETE_MIN`/`TYPE_DELETE_MAX` lower in the CONFIG section
+- Set `TYPE_DELETE_MIN`/`TYPE_DELETE_MAX` lower in the CONFIG section
 
 **Activity too high/intrusive?**
 
 - Increase `MIN_READ_TIME`, `MAX_READ_TIME`, `READ_STEP_*`, and `MOUSE_STEP_*`
-- Increase `SCROLLS_BEFORE_TYPING` to delay keyboard simulation
+- Reduce `TYPING_PHASE_MIN_SECONDS`/`TYPING_PHASE_MAX_SECONDS` to shorten keyboard activity
 
 **Want to disable completely?**
 
